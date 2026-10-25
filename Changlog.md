@@ -1,5 +1,19 @@
 # Pn3DKit 需求、实现与验证记录
 
+## 0.1.22（2026-10-25，候选待 CAD 复测）
+
+### 变更
+
+- 用户复测 0.1.21 仍不能编辑；截图显示 Primary Line Segment 的 Comment、Area 已正确读值，但提示“字段没有可核对的 SDK 列元数据”。核对官方 SDK：PnPTable.Columns 仅包含本类定义，不含父类和扩展列；此前权限与提交校验均误用了该集合，离线元数据／视图测试未覆盖真实继承表解析。
+- FastPlantPropertiesAccess 统一通过 FindEffectiveColumn 使用 AllColumns 解析列，覆盖权限、写前复核及输入类型／长度校验。有效列约束仍在实际类别上读取，保留项目的继承覆盖；不对 Comment、Area 特殊放行，不扩大写入对象或属性上下文。
+- 保留真实只读、获取、计算字段和 Tag 专用登记／冲突校验，以及单选、身份／原值复核、回读、不自动保存。默认单空行、布局、九条命令、SDK 引用及单 DLL 交付保持。
+- 产品／信息 0.1.22，程序集／文件 0.1.22.0；按用户确认计划执行补丁、验证及本地提交，不推送、不创建正式 Release。
+
+### 验证
+
+- x64 Debug／Release 构建均零警告、零错误；两配置各 398 项现有离线回归通过，包括 7 项 STA WPF 交互测试。两配置 0.1.22／0.1.22.0、.NET 8／AMD64／九条命令及单 DLL 检查通过，九个 CAD 参考均来自 E:\Autodesk SDK 且不复制输出。仅读取候选 DLL 的 PE／IL，核对两配置的权限、提交方法共用 FindEffectiveColumn，且解析入口调用 get_AllColumns，不加载 Autodesk 或模拟实机表。ZIP 结构、内外 SHA-256、Git 空白和忽略规则检查通过；日志 artifacts/validation/0.1.22/。
+- CAD 待复测：同一 Primary 对象与 Data Manager 对照 Comment／Area 的输入、提交、回读；空值、自定义继承字段及真实只读字段；真实写入、注释刷新和撤销。本轮不自动连接 CAD 或操作用户图纸，离线结果不替代实机验收。
+
 ## 0.1.21（2026-10-25，候选待 CAD 复测）
 
 ### 变更
