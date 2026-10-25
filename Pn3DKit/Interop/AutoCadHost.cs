@@ -138,7 +138,7 @@ internal sealed class AutoCadHost : ICadHost
             {
                 var active = _documents.MdiActiveDocument;
                 RestoreVariables(variables);
-                if (original != null && !ReferenceEquals(original, active))
+                if (original != null && (active == null || original.Database.BlockTableId != active.Database.BlockTableId))
                 {
                     _documents.MdiActiveDocument = original;
                     RestoreVariables(variables);
@@ -157,7 +157,9 @@ internal sealed class AutoCadHost : ICadHost
     {
         EnsureProject();
         var document = ((Drawing)drawing).Document;
-        if (!_documents.Cast<Document>().Any(d => ReferenceEquals(d, document)))
+        var target = (Drawing)drawing;
+        if (target.Database.IsDisposed || !target.Identity.IsValid
+            || !_documents.Cast<Document>().Any(d => d.Database.BlockTableId == target.Identity))
             throw new CadOperationException("目标文档已关闭。");
         _documents.MdiActiveDocument = document;
         return true;
@@ -184,8 +186,8 @@ internal sealed class AutoCadHost : ICadHost
         await InApplicationAsync(() =>
         {
             EnsureProject();
-            if (!ReferenceEquals(_documents.MdiActiveDocument, ((Drawing)drawing).Document)
-                || Convert.ToInt32(AcadApp.GetSystemVariable("DBMOD")) != 0)
+            EnsureActive(drawing);
+            if (Convert.ToInt32(AcadApp.GetSystemVariable("DBMOD")) != 0)
                 throw new CadOperationException("关闭前文档或修改状态改变，已保留图纸。", true);
             ((Drawing)drawing).Document.CloseAndDiscard();
             return true;

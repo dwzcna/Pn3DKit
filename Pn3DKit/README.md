@@ -1,4 +1,4 @@
-# Pn3DKit 0.1.5
+# Pn3DKit 0.1.6
 
 用于 AutoCAD Plant 3D 2026、Windows x64 的工具插件。
 
@@ -13,6 +13,8 @@
 | CHECKPNTAG | 检查一个部件的现有位号，显示期望位号和属性差异 |
 | CHECKPNTAGBYCLASS | 按类别检查当前图纸模型空间，生成 TagCheck.log 和 TagCheck.csv |
 | REBUILDPNTAGBYCLASS | 预检并确认后按类别更新 PnId 部件位号，生成重建日志与 CSV |
+| CHECKPROJECTPNTAGBYCLASS | 按类别检查整个项目，包含未打开图纸 |
+| REBUILDPROJECTPNTAGBYCLASS | 全项目预检后选择逐图重建或提交项目数据 |
 | GETPNTAGFORMAT | 查看一个部件采用的位号格式 |
 | EVALUATEPNTAG | 输入格式，计算所选部件对应的位号 |
 | PNDWGEXPORT | 将项目 PnId／Piping 图纸批量导出为普通 AutoCAD DWG |
@@ -73,6 +75,32 @@ GETPNTAGFORMAT 显示类别、格式名称和表达式。EVALUATEPNTAG 在选择
 Yes／Y 会通过 QSAVE 保存有修改的源图，取消不会撤销保存；No／N 跳过有修改图纸。保存失败或仍有修改时不导出，已保存只读图纸允许导出。请先备份项目。
 
 不覆盖源图或已有正式输出。取消或状态不明确时，可能保留工具打开的图纸和临时文件，请根据提示检查现场。执行时不要切换项目、图纸或启动其他命令。
+
+
+## 检查与重建整个项目
+
+`CHECKPROJECTPNTAGBYCLASS` 检查当前项目实际使用的元件和管线组，包含未打开的图纸。类别列表显示目标数和关联图纸数；输入编号、范围或 `*`，回车／0 结束。共享数据行只统计一次。检查保持只读，不主动打开图纸、不保存或提交项目数据。
+
+`REBUILDPROJECTPNTAGBYCLASS` 对全项目先做只读预检，只更新 PnId 的 Tag（含 SLINE 和管线组），Piping 管线号跳过。预览列出位号变化和需要重建的完整图纸清单，CSV 可先以只读方式核对。冲突按项目注册键检查；没有注册表时使用完整项目索引，索引不完整则禁止相关写入。
+
+```text
+重建方式 [打开图纸重建(Y)/仅重建项目数据(N)/取消(C)] <N>:
+```
+
+**回车默认 N，会修改并提交项目数据。** 请选择适合的方式：
+
+- **N：仅项目数据**。不打开 DWG、不 QSAVE、不刷新图纸。已有待提交项目修改时停止，避免代为提交原有修改；提交异常或回读不明也停止，不全局拒绝修改。图纸注释可能尚未刷新，当前 DWG 的 UNDO 不保证恢复项目数据，请按日志恢复。
+- **Y：打开图纸重建**。先统一选择是否保存，默认 N。逐图重新校验、写入、回读及刷新，每图独立撤销组。共享行只写一次，其他关联图纸验证并刷新。选择保存时 QSAVE 包括原有修改；不保存时全部修改图纸保持打开。原先打开的图纸始终保留，工具打开的图纸只在无图纸修改且无待提交项目数据时关闭。不承诺跨图纸一次撤销。
+- **C／Esc：取消**。保留预检和已完成记录，不继续写入。
+
+日志目录沿用 FILEDIA 和 `[选择..(C)]`，直接写入确认的文件夹：
+
+| 命令 | 建议目录（系统文档目录下） | 文件 |
+| --- | --- | --- |
+| 项目检查 | Pn3DKit.ProjectTagCheck/yyMMddHHmmss | ProjectTagCheck.log、ProjectTagCheck.csv |
+| 项目重建 | Pn3DKit.ProjectTagRebuild/yyMMddHHmmss | ProjectTagRebuild.log、ProjectTagRebuild.csv |
+
+同秒目录建议追加序号；不覆盖同名文件。CSV 为 UTF-8 BOM，包含项目部分、类别、数据行ID、所有关联图纸、句柄及结果。重建保留预检和最终动作的追加历史，以“项目部分＋数据行ID”的最后一条为准。项目变化、Esc 或日志故障会停止并保留已完成内容。
 
 ## 说明与校验
 

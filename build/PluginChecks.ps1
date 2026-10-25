@@ -98,8 +98,8 @@ function Test-PluginAssembly([string]$Path, [string]$Version) {
         throw '插件必须为 AMD64 / .NET 8。'
     }
     if (!$assemblyMetadata.ExtensionApplication -or !$assemblyMetadata.CommandClass -or
-        $assemblyMetadata.Commands.Count -ne 6 -or
-        (@($assemblyMetadata.Commands | Sort-Object) -join '|') -cne 'CHECKPNTAG|CHECKPNTAGBYCLASS|EVALUATEPNTAG|GETPNTAGFORMAT|PNDWGEXPORT|REBUILDPNTAGBYCLASS') {
+        $assemblyMetadata.Commands.Count -ne 8 -or
+        (@($assemblyMetadata.Commands | Sort-Object) -join '|') -cne 'CHECKPNTAG|CHECKPNTAGBYCLASS|CHECKPROJECTPNTAGBYCLASS|EVALUATEPNTAG|GETPNTAGFORMAT|PNDWGEXPORT|REBUILDPNTAGBYCLASS|REBUILDPROJECTPNTAGBYCLASS') {
         throw '插件加载入口或公开命令注册不符。'
     }
     return $assemblyMetadata

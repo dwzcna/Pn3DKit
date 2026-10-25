@@ -17,7 +17,9 @@ internal sealed record PlantTagTarget(PlantTagContext Context, TagTargetKind Kin
     internal bool FormatKnown { get; init; }
     internal string? FormatError { get; init; }
     internal string Key => Context.PartName + ":" + Context.RowId;
-    internal string Handle => string.Join("、", ObjectIds.Select(id => id.Handle.ToString()));
+    internal string RemoteHandles { get; init; } = "";
+    internal string Handle => Kind == TagTargetKind.LineGroup ? "" : ObjectIds.Length == 0
+        ? RemoteHandles : string.Join("、", ObjectIds.Select(id => id.Handle.ToString()));
     internal TagCheckSubject Subject => new(Context.PartName, Context.ClassName, Handle, "", "")
     { RowId = Context.RowId.ToString(), Kind = Kind, Drawings = Drawings, RelatedHandles = RelatedHandles };
 }
@@ -164,7 +166,9 @@ internal static class PlantTagCatalogAccess
                     directScope.Add(id);
                     rowMap[id] = new(id, name, kind, []);
                     targets[id] = new(new(partName, part, links, id, name), kind, association.Ids,
-                        association.Paths, drawing == null ? association.Handles : "", []);
+                        association.Paths, drawing == null ? association.Handles : "", [])
+                    { RemoteHandles = string.Join("、", association.Handles.Split('、', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(x => x[(x.LastIndexOf(':') + 1)..]).Distinct()) };
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (System.Exception ex) { warnings.Add($"[{partName}] 数据行 {id} 关联读取失败：{ex.Message}"); }
