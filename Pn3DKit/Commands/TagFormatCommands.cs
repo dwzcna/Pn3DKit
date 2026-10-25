@@ -2,6 +2,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Pn3DKit.Interop;
+using Pn3DKit.Utils;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
 [assembly: CommandClass(typeof(Pn3DKit.Commands.TagFormatCommands))]
@@ -43,7 +44,7 @@ public sealed class TagFormatCommands
     }
 
     /// <summary>选择单个部件并输入格式，将 SDK 计算的位号输出到命令行。</summary>
-    /// <remarks>支持 PICKFIRST 和交互选择；取消、空输入及缺失属性均不执行位号赋值。</remarks>
+    /// <remarks>支持 PICKFIRST 和交互选择；不主动赋号，SDK 求值可能更新序列字段，不保证项目数据不变。</remarks>
     [CommandMethod("EVALUATEPNTAG", CommandFlags.Modal | CommandFlags.UsePickSet)]
     public void EvaluatePnTag()
     {
@@ -61,6 +62,7 @@ public sealed class TagFormatCommands
         }
         try
         {
+            editor.WriteMessage("\n" + TagEvaluationNotice.Text);
             var objectId = SelectTarget(editor, "EVALUATEPNTAG");
             editor.WriteMessage("\nPn3DKit " + typeof(TagFormatCommands).Assembly.GetName().Version
                 + " | EVALUATEPNTAG");

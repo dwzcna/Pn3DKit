@@ -54,13 +54,13 @@ internal sealed class RibbonController : IDisposable
             _buttons.Clear();
             var source = new RibbonPanelSource { Title = "位号与导出" };
             source.Items.Add(Column(
-                SmallButton("CHECKPNTAG", "检查元件位号", "检查所选元件的现有位号，显示当前属性差异。"),
-                SmallButton("CHECKPNTAGBYCLASS", "检查元件位号(本页)", "按类别检查当前图纸模型空间的位号，生成日志和 CSV。"),
-                SmallButton("CHECKPROJECTPNTAGBYCLASS", "检查项目元件位号", "检查整个项目实际使用的元件和管线组，包含未打开图纸。")));
+                SmallButton("CHECKPNTAG", "检查元件位号", "检查所选元件的现有位号，显示当前属性差异；SDK 求值可能更新序列字段。"),
+                SmallButton("CHECKPNTAGBYCLASS", "检查元件位号(本页)", "按类别检查当前图纸模型空间的位号，生成日志和 CSV；SDK 求值可能更新序列字段。"),
+                SmallButton("CHECKPROJECTPNTAGBYCLASS", "检查项目元件位号", "检查整个项目实际使用的元件和管线组，包含未打开图纸；SDK 求值可能更新序列字段。")));
             source.Items.Add(Column(
-                SmallButton("EVALUATEPNTAG", "评估元件位号", "输入格式，计算所选元件对应的位号。"),
-                SmallButton("REBUILDPNTAGBYCLASS", "重建元件位号", "只读预检后确认，重建当前图纸 PnId 位号，默认不保存。"),
-                SmallButton("REBUILDPROJECTPNTAGBYCLASS", "重建项目元件位号", "预检整个项目，选择逐图重建或仅提交项目数据；默认 N 提交项目数据。")));
+                SmallButton("EVALUATEPNTAG", "评估元件位号", "输入格式，计算所选元件对应的位号；SDK 求值可能更新序列字段。"),
+                SmallButton("REBUILDPNTAGBYCLASS", "重建元件位号", "预检后确认，重建当前图纸 PnId 位号，默认不保存；SDK 求值可能更新序列字段。"),
+                SmallButton("REBUILDPROJECTPNTAGBYCLASS", "重建项目元件位号", "预检整个项目，选择逐图重建或仅提交项目数据；默认 N 提交项目数据；SDK 求值可能更新序列字段。")));
             source.Items.Add(Column(
                 SmallButton("GETPNTAGFORMAT", "获取位号格式", "查看所选部件实际采用的位号格式。")));
             source.Items.Add(new RibbonSeparator { SeparatorStyle = RibbonSeparatorStyle.Line });

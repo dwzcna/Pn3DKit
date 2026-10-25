@@ -1,13 +1,13 @@
 namespace Pn3DKit.Models;
 
-/// <summary>只读预检的四种分类。</summary>
+/// <summary>位号预检的四种分类；SDK 格式求值不保证无副作用。</summary>
 public enum TagRebuildState { Consistent, Ready, Unavailable, Conflict }
 /// <summary>CSV 追加事件；待重建是预览，其余为对象最终动作。</summary>
 public enum TagRebuildAction { Pending, Updated, Skipped, Conflict, Failed, Unexecuted }
 
 /// <summary>以项目部分和数据行标识对象，同一行的多个图形句柄合并为一条。</summary>
 /// <param name="Key">项目部分及数据行的稳定组合，不使用托管包装引用。</param>
-/// <param name="Check">共享只读检查结果，句柄可列出同一数据行的全部图形。</param>
+/// <param name="Check">共享检查结果快照，句柄可列出同一数据行的全部图形。</param>
 /// <param name="Registry">位号注册表名；空值表示只能在本图保守检查。</param>
 /// <param name="CandidateTag">SDK 转换后的注册键；不可直接将显示 Tag 送入注册表。</param>
 /// <param name="Exclusion">范围或 SDK 错误导致的不可写原因。</param>

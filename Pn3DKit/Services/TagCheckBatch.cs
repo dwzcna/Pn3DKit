@@ -7,7 +7,7 @@ public static class TagCheckBatch
 {
     /// <summary>在调用线程执行检查；CAD 实现负责在 beforeEach 中检测 Esc 和上下文。</summary>
     /// <param name="items">已固定的所选类别对象清单。</param>
-    /// <param name="check">与单个命令相同的逐对象只读检查。</param>
+    /// <param name="check">与单个命令相同的逐对象检查；其 SDK 求值可能更新序列字段。</param>
     /// <param name="beforeEach">检查取消及项目／文档身份；取消抛出 OperationCanceledException。</param>
     /// <param name="journal">已独占打开两件文件的日志。</param>
     /// <param name="progress">每五十条及结束时输出已处理与总数。</param>

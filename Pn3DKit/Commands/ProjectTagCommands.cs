@@ -14,7 +14,7 @@ namespace Pn3DKit.Commands;
 /// <summary>按项目实际使用的数据行执行类别检查和预检；租约覆盖异步图纸操作与日志收尾。</summary>
 public sealed class ProjectTagCommands
 {
-    /// <summary>只读检查全项目，包括未打开图纸；不主动打开 DWG、不保存或提交数据。</summary>
+    /// <summary>检查全项目且不主动打开 DWG；SDK 求值可能更新序列字段，不保证项目数据不变。</summary>
     [CommandMethod("CHECKPROJECTPNTAGBYCLASS", CommandFlags.Session)]
     public async void CheckProjectPnTagByClass() => await RunAsync(false);
 
@@ -57,6 +57,7 @@ public sealed class ProjectTagCommands
                     TagCheckCommands.CheckBreak();
                 }
                 Ensure();
+                Write(TagEvaluationNotice.Text);
                 var scan = PlantTagCatalogAccess.Read(null, Ensure);
                 isCurrent = scan.IsCurrent;
                 var groups = SelectGroups(current.Editor, scan, Ensure, rebuild);

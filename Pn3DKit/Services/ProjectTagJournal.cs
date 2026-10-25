@@ -34,6 +34,7 @@ public sealed class ProjectTagJournal : ITagRebuildJournal, IDisposable
             _log.WriteLine("Pn3DKit | " + (rebuild ? "REBUILDPROJECTPNTAGBYCLASS" : "CHECKPROJECTPNTAGBYCLASS"));
             _log.WriteLine("项目：" + project + "；类别：" + string.Join("、", classes));
             _log.WriteLine("开始时间：" + DateTimeOffset.Now.ToString("O"));
+            _log.WriteLine(TagEvaluationNotice.Text);
             _csv.WriteLine(rebuild
                 ? "项目部分,类别,数据行ID,关联图纸,句柄,原Tag,新Tag,动作,原因,差异字段"
                 : "项目部分,类别,数据行ID,关联图纸,句柄,现有Tag,期望Tag,状态,差异字段");
@@ -42,7 +43,7 @@ public sealed class ProjectTagJournal : ITagRebuildJournal, IDisposable
         catch { Dispose(); throw; }
     }
 
-    /// <summary>只读检查结果也逐条刷新，不生成最终写入动作。</summary>
+    /// <summary>检查结果逐条刷新，不生成重建动作；SDK 求值副作用提示保留在日志头。</summary>
     public void AppendCheck(TagCheckResult item)
     {
         var s = item.Subject;

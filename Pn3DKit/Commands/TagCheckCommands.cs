@@ -13,7 +13,7 @@ using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
 namespace Pn3DKit.Commands;
 
-/// <summary>在当前文档命令上下文提供单个及按类别的只读位号检查。</summary>
+/// <summary>在当前文档命令上下文对比单个及按类别的位号；SDK 求值可能更新序列字段。</summary>
 public sealed class TagCheckCommands
 {
     /// <summary>复用预选或单选，输出现有 Tag、期望 Tag 及逐字段差异。</summary>
@@ -25,6 +25,7 @@ public sealed class TagCheckCommands
         var editor = document.Editor;
         try
         {
+            editor.WriteMessage("\n" + TagEvaluationNotice.Text);
             var id = TagFormatCommands.SelectTarget(editor, "CHECKPNTAG");
             if (!id.HasValue) return;
             var result = PlantTagCheckAccess.Check(id.Value);
@@ -66,6 +67,7 @@ public sealed class TagCheckCommands
             EnsureDocument(database, databaseIdentity);
             ensureRetention = () => EnsureDocument(database, databaseIdentity);
             var editor = document.Editor;
+            editor.WriteMessage("\n" + TagEvaluationNotice.Text);
             var scan = PlantTagCheckAccess.Scan(database, () =>
             {
                 EnsureDocument(database, databaseIdentity);

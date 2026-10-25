@@ -12,7 +12,7 @@ using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
 namespace Pn3DKit.Commands;
 
-/// <summary>在会话入口协调只读预检、默认否确认、单撤销组写入和异步 QSAVE。</summary>
+/// <summary>在会话入口协调位号预检、默认否确认、单撤销组写入和异步 QSAVE；预检不保证无副作用。</summary>
 public sealed class TagRebuildCommands
 {
     /// <summary>按当前图纸类别重建 PnId.Tag；异步入口捕获所有回调异常，租约覆盖保存及日志收尾。</summary>
@@ -40,6 +40,7 @@ public sealed class TagRebuildCommands
             {
                 void EnsureDocument() => TagCheckCommands.EnsureDocument(database, identity);
                 EnsureDocument();
+                Write(TagEvaluationNotice.Text);
                 PlantTagRebuildAccess.EnsureWritable(document);
                 var scan = PlantTagCheckAccess.Scan(database, () =>
                 { EnsureDocument(); TagCheckCommands.CheckBreak(); });

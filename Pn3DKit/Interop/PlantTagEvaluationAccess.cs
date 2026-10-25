@@ -17,7 +17,7 @@ internal static class PlantTagEvaluationAccess
     /// <param name="objectId">当前文档中已确认有效的单个对象标识。</param>
     /// <param name="tagFormat">已去除命令行外层引号的非空格式字符串。</param>
     /// <returns>SDK 求值结果、明确缺失的原始片段或带上下文的 SDK 失败信息。</returns>
-    /// <remarks>延迟访问 Plant；不调用位号赋值、属性写回或保存命令，外部异常由命令入口处理。</remarks>
+    /// <remarks>延迟访问 Plant；不主动赋号或保存，但 SDK Evaluate 可能更新序列字段；外部异常由命令入口处理。</remarks>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static string Evaluate(ObjectId objectId, string tagFormat)
     {

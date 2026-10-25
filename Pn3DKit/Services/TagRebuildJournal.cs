@@ -36,6 +36,7 @@ public sealed class TagRebuildJournal : ITagRebuildJournal, IDisposable
             _log.WriteLine("图纸：" + drawing);
             _log.WriteLine("所选类别：" + string.Join("、", classes));
             _log.WriteLine("开始时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
+            _log.WriteLine(TagEvaluationNotice.Text);
             _log.WriteLine("CSV 为追加历史：同项目部分及数据行ID最后一条为最终动作。仅写 PnId.Tag，包含 SLINE 和管线组，不处理 Piping 管线号。");
             _csv.WriteLine("项目部分,类别,数据行ID,句柄,原Tag,新Tag,动作,原因,差异字段");
             Flush();

@@ -1,6 +1,6 @@
 namespace Pn3DKit.Models;
 
-/// <summary>预检后明确选择的数据或图纸重建模式；取消不产生写入。</summary>
+/// <summary>预检后选择数据或图纸重建；取消不执行重建写入，预检仍可能产生 SDK 求值副作用。</summary>
 public enum ProjectTagMode { Data, Drawings, Cancel }
 /// <summary>固定一张关联图纸及其中涉及的已确认数据行。</summary>
 public sealed record ProjectTagDrawingJob(string Path, IReadOnlyList<string> Keys);

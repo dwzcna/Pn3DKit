@@ -40,6 +40,7 @@ public sealed class TagCheckJournal : IDisposable
             _log.WriteLine("图纸：" + drawing);
             _log.WriteLine("所选类别：" + string.Join("、", _classes));
             _log.WriteLine("开始时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
+            _log.WriteLine(TagEvaluationNotice.Text);
             if (skipped.Length != 0) _log.WriteLine(skipped);
             _csv.WriteLine("项目部分,类别,数据行ID,句柄,现有Tag,期望Tag,状态,差异字段");
             Flush();

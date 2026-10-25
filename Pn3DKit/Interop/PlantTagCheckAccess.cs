@@ -14,7 +14,7 @@ namespace Pn3DKit.Interop;
 
 
 
-/// <summary>在 CAD 主线程以只读方式检查当前项目的对象位号。</summary>
+/// <summary>在 CAD 主线程检查对象位号；不主动写回目标 Tag，SDK 求值可能更新序列字段。</summary>
 internal static class PlantTagCheckAccess
 {
     /// <summary>对 SDK 异常补充稳定状态码；用户中断必须向批次传播。</summary>
@@ -89,7 +89,7 @@ internal static class PlantTagCheckAccess
     }
 
     /// <summary>按 SDK 拆出的旧值读取当前属性；只对非自动编号属性片段求值以保留格式规则。</summary>
-    /// <remarks>任何整式 Evaluate、自动编号及 AssignProperty 调用均不属于检查流程。</remarks>
+    /// <remarks>检查不对整式 Evaluate 或主动 AssignProperty；片段 Evaluate 与 RebuildTagValue 不保证无副作用。</remarks>
     private static IReadOnlyList<TagCheckField> ReadFields(FormatToolsUtil tools, ObjectId objectId,
         PlantTagContext context, string format, string tag)
     {
@@ -147,7 +147,7 @@ internal static class PlantTagCheckAccess
                         }
                         string raw = (objectId.IsNull ? tools.RetrieveProperty(propertyPath, context.RowId, context.Links)
                             : tools.RetrieveProperty(propertyPath, objectId)) ?? "";
-                        // 此片段已确认非自动编号；只计算该属性的格式规则，不生成新编号。
+                        // 非自动编号片段仍可能含 ^；SDK 求值可能更新序列字段，不能据此承诺只读。
                         string expected = Evaluate(token)
                             ?? throw new InvalidOperationException("SDK 未返回字段值。");
                         return (Raw: raw, Expected: expected);
