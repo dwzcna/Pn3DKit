@@ -1,4 +1,5 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <!-- AutoCAD 2026 使用 .NET 8 宿主；插件不携带独立运行时。 -->
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
@@ -12,12 +13,18 @@
     <PublishTrimmed>false</PublishTrimmed>
     <PublishReadyToRun>false</PublishReadyToRun>
     <SelfContained>false</SelfContained>
-    <Plant3DSdkRoot Condition="'$(Plant3DSdkRoot)' == ''">E:\AutoCAD Plant 3D 2026 SDK</Plant3DSdkRoot>
-    <!-- 默认优先读取本机 CAD 的参考；可显式指定已验证的 .NET 8 SDK 目录。 -->
-    <AutoCadManagedRoot Condition="'$(AutoCadManagedRoot)' == '' and Exists('$(ProgramW6432)\Autodesk\AutoCAD 2026\AcCoreMgd.dll')">$(ProgramW6432)\Autodesk\AutoCAD 2026</AutoCadManagedRoot>
-    <AutoCadManagedRoot Condition="'$(AutoCadManagedRoot)' == ''">$(Plant3DSdkRoot)\inc</AutoCadManagedRoot>
-    <PlantManagedRoot Condition="'$(PlantManagedRoot)' == '' and Exists('$(AutoCadManagedRoot)\PLNT3D\PnPProjectManagerMgd.dll')">$(AutoCadManagedRoot)\PLNT3D</PlantManagedRoot>
-    <PlantManagedRoot Condition="'$(PlantManagedRoot)' == ''">$(Plant3DSdkRoot)\inc-x64</PlantManagedRoot>
+  </PropertyGroup>
+  <!-- SDK targets 自动导入 csproj.user；随后声明引用，保证 VS 与命令行均能使用本机属性。 -->
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <PropertyGroup>
+    <_UseCiSdk Condition="'$(GITHUB_ACTIONS)' == 'true' or '$(ContinuousIntegrationBuild)' == 'true'">true</_UseCiSdk>
+    <AutodeskSdkRoot Condition="'$(AutodeskSdkRoot)' == '' and '$(_UseCiSdk)' == 'true'">$(MSBuildProjectDirectory)\..\artifacts\sdk</AutodeskSdkRoot>
+    <Plant3DSdkRoot Condition="'$(Plant3DSdkRoot)' == '' and '$(_UseCiSdk)' == 'true'">$(AutodeskSdkRoot)\Plant2026\AutoCAD Plant 3D 2026 SDK</Plant3DSdkRoot>
+    <AutoCadManagedRoot Condition="'$(AutoCadManagedRoot)' == '' and '$(Plant3DSdkRoot)' != ''">$(Plant3DSdkRoot)\inc</AutoCadManagedRoot>
+    <PlantManagedRoot Condition="'$(PlantManagedRoot)' == '' and '$(Plant3DSdkRoot)' != ''">$(Plant3DSdkRoot)\inc-x64</PlantManagedRoot>
+    <PlantCommonManagedRoot Condition="'$(PlantCommonManagedRoot)' == ''">$(PlantManagedRoot)</PlantCommonManagedRoot>
+    <!-- 不使用安装目录、注册表、GAC 或历史输出查找 CAD 引用。 -->
+    <AssemblySearchPaths>{HintPathFromItem};$(AutoCadManagedRoot);$(PlantManagedRoot);$(PlantCommonManagedRoot);{TargetFrameworkDirectory};{RawFileName}</AssemblySearchPaths>
   </PropertyGroup>
   <!-- Autodesk 程序集由 CAD 提供，严禁复制进 NETLOAD 交付目录。 -->
   <ItemGroup>
@@ -46,20 +53,35 @@
       <Private>false</Private>
     </Reference>
     <Reference Include="PnPDataLinks">
-      <HintPath>$(PlantManagedRoot)\PnPDataLinks.dll</HintPath>
+      <HintPath>$(PlantCommonManagedRoot)\PnPDataLinks.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="PnPDataObjects">
-      <HintPath>$(PlantManagedRoot)\PnPDataObjects.dll</HintPath>
+      <HintPath>$(PlantCommonManagedRoot)\PnPDataObjects.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="PnPCommonDbxMgd">
-      <HintPath>$(PlantManagedRoot)\PnPCommonDbxMgd.dll</HintPath>
+      <HintPath>$(PlantCommonManagedRoot)\PnPCommonDbxMgd.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
-  <Target Name="ValidatePlantSdk" BeforeTargets="ResolveReferences">
-    <Error Condition="!Exists('$(AutoCadManagedRoot)\AcCoreMgd.dll') or !Exists('$(PlantManagedRoot)\PnPProjectManagerMgd.dll')" Text="缺少 AutoCAD/Plant 3D 2026 的 .NET 8 参考程序集，请设置 AutoCadManagedRoot、PlantManagedRoot 或 Plant3DSdkRoot。" />
+  <Target Name="ValidatePlantSdk" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(AutodeskSdkRoot)' == '' or '$(AutoCadManagedRoot)' == '' or '$(PlantManagedRoot)' == '' or '$(PlantCommonManagedRoot)' == ''" Text="请在 Pn3DKit.csproj.user 配置 AutodeskSdkRoot 和 SDK 参考目录；CI 使用仓库 artifacts\sdk。" />
+    <PropertyGroup>
+      <_AllowedSdkDirectory>$([MSBuild]::NormalizeDirectory('$(AutodeskSdkRoot)'))</_AllowedSdkDirectory>
+      <_AllowedSdkDirectoryUpper>$(_AllowedSdkDirectory.ToUpperInvariant())</_AllowedSdkDirectoryUpper>
+    </PropertyGroup>
+    <ItemGroup>
+      <_RequiredAutodeskSdkReference Include="$(AutoCadManagedRoot)\AcCoreMgd.dll;$(AutoCadManagedRoot)\AcDbMgd.dll;$(AutoCadManagedRoot)\AcMgd.dll;$(AutoCadManagedRoot)\AdWindows.dll;$(AutoCadManagedRoot)\AcWindows.dll;$(PlantManagedRoot)\PnPProjectManagerMgd.dll;$(PlantCommonManagedRoot)\PnPDataLinks.dll;$(PlantCommonManagedRoot)\PnPDataObjects.dll;$(PlantCommonManagedRoot)\PnPCommonDbxMgd.dll" />
+    </ItemGroup>
+    <Error Condition="!$([System.String]::Copy('%(_RequiredAutodeskSdkReference.FullPath)').ToUpperInvariant().StartsWith('$(_AllowedSdkDirectoryUpper)'))" Text="禁止从 SDK 根目录之外引用 CAD DLL：%(_RequiredAutodeskSdkReference.FullPath)" />
+    <Error Condition="!Exists('%(_RequiredAutodeskSdkReference.Identity)')" Text="缺少 SDK 参考：%(_RequiredAutodeskSdkReference.FullPath)。请检查 csproj.user 或 CI SDK 配置，不回退其他目录。" />
     <Error Condition="'$(Platform)' == 'ARM64'" Text="Pn3DKit 仅支持 AutoCAD 2026 x64。" />
+  </Target>
+  <Target Name="ValidateAutodeskReferenceSources" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <_ResolvedAutodeskReference Include="@(ReferencePath)" Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ReferencePath.Filename)', '^(Ac[A-Z]|AdWindows$|Adsk|PnP|PnID|Autodesk\.)'))" />
+    </ItemGroup>
+    <Error Condition="!$([System.String]::Copy('%(_ResolvedAutodeskReference.FullPath)').ToUpperInvariant().StartsWith('$(_AllowedSdkDirectoryUpper)'))" Text="CAD 依赖解析到了 SDK 根目录之外：%(_ResolvedAutodeskReference.FullPath)" />
   </Target>
 </Project>

@@ -2,9 +2,12 @@
 # 只打包 NETLOAD 插件；所有校验通过后才发布本地 ZIP，不执行真实 CAD。
 param(
     [switch]$NoBuild,
-    [string]$Plant3DSdkRoot = 'E:\AutoCAD Plant 3D 2026 SDK',
+    [string]$AutodeskSdkRoot,
+    [string]$Plant3DSdkRoot,
     [string]$AutoCadManagedRoot,
     [string]$PlantManagedRoot,
+    [string]$PlantCommonManagedRoot,
+    [switch]$ContinuousIntegrationBuild,
     [string]$BuildOutputRoot,
     [string]$InputDirectory = (Join-Path $PSScriptRoot '../artifacts/plugins/Pn3DKit'),
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '../artifacts/release')
@@ -13,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'PluginChecks.ps1')
 $publishRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (!$NoBuild) {
-    & (Join-Path $PSScriptRoot 'Build-Pn3DKit.ps1') -Plant3DSdkRoot $Plant3DSdkRoot -AutoCadManagedRoot $AutoCadManagedRoot -PlantManagedRoot $PlantManagedRoot -BuildOutputRoot $BuildOutputRoot -OutputDirectory $InputDirectory | Out-Host
+    & (Join-Path $PSScriptRoot 'Build-Pn3DKit.ps1') -AutodeskSdkRoot $AutodeskSdkRoot -Plant3DSdkRoot $Plant3DSdkRoot -AutoCadManagedRoot $AutoCadManagedRoot -PlantManagedRoot $PlantManagedRoot -PlantCommonManagedRoot $PlantCommonManagedRoot -ContinuousIntegrationBuild:$ContinuousIntegrationBuild -BuildOutputRoot $BuildOutputRoot -OutputDirectory $InputDirectory | Out-Host
 }
 $publishVersionText = & dotnet msbuild (Join-Path $publishRepo 'Pn3DKit/Pn3DKit.csproj') -nologo '-getProperty:Version'
 if ($LASTEXITCODE) { throw '无法读取发布版本。' }

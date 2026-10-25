@@ -97,7 +97,7 @@ public sealed class TagFormatCommands
     /// <param name="editor">当前文档编辑器，必须在该文档命令上下文调用。</param>
     /// <param name="commandName">选择数量不符时提示用户重新执行的命令名称。</param>
     /// <returns>有效对象标识；取消、空选或选择数量不符时返回空。</returns>
-    private static ObjectId? SelectTarget(Editor editor, string commandName)
+    internal static ObjectId? SelectTarget(Editor editor, string commandName)
     {
         var selection = editor.SelectImplied();
         if (selection.Status != PromptStatus.OK || selection.Value == null || selection.Value.Count == 0)

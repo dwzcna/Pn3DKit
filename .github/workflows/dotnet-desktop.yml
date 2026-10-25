@@ -47,20 +47,21 @@ jobs:
       - name: Cache original Autodesk SDK
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/Pn3DKitSdk
-          key: Plant2026-${{ runner.os }}-${{ hashFiles('build/PlantSdk.json') }}
+          path: artifacts/sdk/
+          key: Plant2026-workspace-${{ runner.os }}-${{ hashFiles('build/PlantSdk.json') }}
 
       - name: Download and verify SDK references
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $sdk = ./build/Get-PlantSdk.ps1 -RootDirectory "$env:RUNNER_TEMP/Pn3DKitSdk"
+          $sdk = ./build/Get-PlantSdk.ps1
           "AutoCadManagedRoot=$($sdk.AutoCadManagedRoot)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "PlantManagedRoot=$($sdk.PlantManagedRoot)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PlantCommonManagedRoot=$($sdk.PlantCommonManagedRoot)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build and verify plugin in Debug and Release
         shell: pwsh
-        run: ./build/Build-Pn3DKit.ps1 -AutoCadManagedRoot $env:AutoCadManagedRoot -PlantManagedRoot $env:PlantManagedRoot -BuildOutputRoot artifacts/plugin-build/ci
+        run: ./build/Build-Pn3DKit.ps1 -ContinuousIntegrationBuild -AutoCadManagedRoot $env:AutoCadManagedRoot -PlantManagedRoot $env:PlantManagedRoot -PlantCommonManagedRoot $env:PlantCommonManagedRoot -BuildOutputRoot artifacts/plugin-build/ci
 
       - name: Package Release plugin
         shell: pwsh

@@ -1,5 +1,55 @@
 # Pn3DKit 需求、实现与验证记录
 
+## 0.1.2（2026-10-25）
+
+### 变更
+
+- 新增 CHECKPNTAG：预选或单选 Plant 部件，按类别配置的格式检查现有 Tag，显示期望位号和属性差异；区分一致、不符、无格式、无 Tag、临时 Tag、错误六种状态。
+- 新增 CHECKPNTAGBYCLASS：扫描当前图纸模型空间，按名称列出有格式的类别及数量；支持编号、范围和全选，未选择不执行，Esc 保留已完成结果。
+- 检查共享 PnId／Piping 数据关联及继承格式查询；Piping 的空 Tag 回退 LineNumberTag。优先 SDK RebuildTagValue，逐字段回拼验证后保留自动编号；无法可靠拆分时报告错误与 SDK 状态，不猜测、不赋号、不保存。
+- 日志目录采用文档/Pn3DKit.TagCheck/时间戳，并保留 FILEDIA 和 [选择..(C)] 操作。TagCheck.log 和带 BOM 的 TagCheck.csv 通过 CreateNew 创建，逐条刷新；记录六种状态汇总、停止原因及未处理数量。
+- 产品版本为 0.1.2，程序集和文件版本为 0.1.2.0。保留此前 SDK 修复：本机仅使用 E:\Autodesk SDK，CI 使用 artifacts/sdk，本机路径保存在被忽略的 csproj.user。
+- README 和随包说明改为用户功能、操作、示例和日志说明，构建配置移至开发文档。保留现有导出、Ribbon 及三个命令行为。
+- 本轮按用户授权提交、普通推送 main 和 v0.1.2，由既有 GitHub Actions 发布正式 Release。
+
+### 验证
+
+- 本机 x64 Debug／Release 插件构建全部通过，零警告、零错误；两配置各 126 项离线测试通过，其中新增 43 项覆盖位号重建、类别选择、作用域、即时日志、CSV、中断和失效对象的类别归属。
+- 两配置程序集均通过 0.1.2.0／AMD64／.NET 8／五条命令登记检查。实际解析的九个 CAD 参考均在 E:\Autodesk SDK 内；user 文件、SDK、产物和 AGENTS.md 均被忽略。
+- 本地发布 ZIP 仅含 DLL、使用说明和内部 SHA256SUMS；包结构、内部清单、内外 DLL 一致性及外部 SHA-256 复算通过。PowerShell 语法、工作流 actionlint 和 git diff --check 通过。
+- 本轮日志保存在 artifacts/validation/0.1.2/。云端工作流、发布附件及回下载校验的结果另存该目录，不将本机结果代替云端或实机验收。
+- 真实 CAD 的位号重建、自动编号保持、Esc 响应、源数据未修改及导出图形完整性仍待实机验收；本轮不自动操作用户图纸。
+
+## 0.1.1.2（2026-10-25，本地未提交）
+
+### 变更
+
+- 用户指定本机 SDK 统一使用 E:\Autodesk SDK；CAD SDK 为 CDROM1，Plant SDK 为 AutoCAD Plant 3D 2026 SDK，两者的必需托管参考已核对为 .NET 8。路径属性写入被忽略的 Pn3DKit.csproj.user，不设置系统环境变量，也不回退其他 CAD 安装／SDK 目录。
+- 通过显式 SDK 导入顺序确保 user 属性先于引用声明生效；限定 CAD 引用搜索位置，并检查必需文件及最终解析出的 CAD 依赖都在所选 SDK 根目录内，缺失或越界立即报错。
+- GitHub Actions 改用仓库 artifacts/sdk 解压及缓存，CI 跳过 user 本机属性，构建脚本移除旧 E 盘默认值并支持独立 CI 模式。
+- 产品、信息、程序集和文件版本统一为 0.1.1.2；保留既有未提交修复。本轮不暂存、不提交、不推送。
+
+### 验证
+
+- 本机 E:\Autodesk SDK 与本地模拟 CI 的 artifacts/sdk 两种模式共四次 x64 Debug／Release 构建全部通过，零警告、零错误；两配置各 83 项离线测试通过，版本与单 DLL 交付检查通过。
+- 实际 ResolveReferences 输出确认两种模式均解析 9 个 CAD 程序集：本机全部在 E:\Autodesk SDK 内，CI 模式全部在仓库 artifacts/sdk 内，未使用 CAD 安装目录或其他 SDK 位置。
+- 引用缺失、目录越界、未配置 SDK 的反例均被拒绝；构建脚本在读取 CAD DLL 元数据前拒绝越界路径。本机 user 文件已确认被 Git 忽略；PowerShell 及工作流静态检查通过。
+- 日志 artifacts/validation/0.1.1.2/。本轮未暂存、提交、推送或运行真实云端工作流、CAD 实机验收。
+
+## 0.1.1.1（2026-10-25，本地未提交）
+
+### 变更
+
+- 用户报告默认本机构建出现 DataLinks／PnPCommonDbx 的 CS0234。已复现：项目管理 DLL 位于 AutoCAD 的 PLNT3D 子目录，而 PnPDataLinks、PnPDataObjects、PnPCommonDbxMgd 位于 AutoCAD 根目录；原版 SDK 将这些 DLL 放在同一个 inc-x64 目录，之前仅验证显式 SDK 路径未覆盖默认安装布局。
+- 增加 PlantCommonManagedRoot，自动兼容安装版与 SDK 布局，保留显式覆盖；通用 DLL 引用与项目管理引用分开解析，仍不复制 Autodesk DLL。构建／打包脚本同步目录传递和参考校验，缺少通用 DLL 时提前报告具体文件与目录。
+- 产品、信息、程序集和文件版本统一为用户指定的 0.1.1.1，同步文档及版本断言。本轮不暂存、不提交、不推送。
+
+### 验证
+
+- 修改前默认目录构建已复现三个 MSB3245 和两个 CS0234。修复后默认本机与显式原版 SDK 两种布局的 x64 Debug／Release 四次构建均通过，零警告、零错误；默认通用引用目录已确认为 AutoCAD 根目录。
+- 两配置各 83 项离线测试通过；四份程序集的版本 0.1.1.1、AMD64／.NET 8、三条命令登记及单 DLL 交付校验通过。缺失通用目录的反例构建在程序集解析前明确提示 PnPDataLinks.dll 和目录，不再出现 CS0234／MSB3245；PowerShell 语法检查通过。
+- 日志 artifacts/validation/0.1.1.1/；本轮未暂存、提交、推送或操作真实 CAD，真实 CAD 验收仍待复测。
+
 ## 0.1.1（2026-10-25）
 
 新增 EVALUATEPNTAG、GETPNTAGFORMAT。

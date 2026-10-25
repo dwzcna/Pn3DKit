@@ -1,73 +1,134 @@
 # Pn3DKit
 
-当前版本 **0.1.1**，程序集及文件版本 **0.1.1.0**。
+**Pn3DKit 0.1.2** 是 AutoCAD Plant 3D 2026 的工具插件，帮助你查看、计算和检查部件位号，并将项目图纸批量导出为普通 AutoCAD DWG。
 
-AutoCAD／Plant 3D 2026 的 Windows x64 / .NET 8 NETLOAD 插件，按当前 Plant 项目的 PnId／Piping 清单批量导出普通 AutoCAD DWG。
+适用于 Windows x64。使用位号和项目导出功能时，需要在 Plant 3D 中打开相应项目。
 
-## 使用
+## 有哪些功能
 
-1. 从 [GitHub Release](https://github.com/dwzcna/Pn3DKit/releases) 下载 DLL 或 ZIP，将插件放在 AutoCAD 可信目录，通过 NETLOAD 加载。
-2. 在 Plant 3D 中打开项目和一张图纸，点击 Pn3DKit Ribbon“批量导出CAD”，或执行 `PNDWGEXPORT`。
-3. 点击“P - PnId”／“D - Piping”或输入 P／D；默认匹配当前图纸类型，未匹配时默认 PnId。
-4. 点击 Yes／No 或输入 Y／N，默认 Yes。有修改时仅执行一次 QSAVE；失败或仍有修改时不导出。No 跳过有修改图纸并继续，已保存的只读图纸可以导出。
-5. 在版本选择前统一确认一次输出目录。FILEDIA=0 仅命令行输入，支持中文、空格、成对引号、回车默认及 Esc 取消。FILEDIA=1 显示 `输出导出目录<建议路径> 或 [选择..(C)]:`；回车默认，输入 C 或点击完整标签才打开系统文件夹选择器。插件不更改 FILEDIA。
-6. 点击格式或输入年份／LT 关键字，支持 2007、2010、2013、2018，回车默认 2013（AC1027）。取消目录或版本选择均不开始批次。
-7. 查看逐图统计和所选目录根部的 Export.log。
+| 命令 | 用途 |
+| --- | --- |
+| `CHECKPNTAG` | 检查一个部件的现有位号是否符合其格式和当前属性，显示差异 |
+| `CHECKPNTAGBYCLASS` | 按类别检查当前图纸中的部件，生成文本日志和 CSV |
+| `GETPNTAGFORMAT` | 查看一个部件采用的位号格式 |
+| `EVALUATEPNTAG` | 为一个部件输入格式，计算该格式对应的位号 |
+| `PNDWGEXPORT` | 将当前项目的 PnId 或 Piping 图纸批量导出为普通 DWG |
 
-QSAVE 会改写源图，后续失败或取消不会撤销保存。请先备份，在明确授权的项目副本检查外参、专业对象转换及图形完整性。普通 AutoCAD 缺少 Plant 环境或当前项目时，命令提示原因并结束。
+位号检查只报告结果，不修改位号、部件属性或保存图纸；自动编号段沿用现有 Tag 中的值。
 
-更新 DLL 后须重启 CAD 再 NETLOAD，同一会话重复加载不能替换已加载程序集。
+## 下载与加载
 
-命令 `GETPNTAGFORMAT` 读取单个部件的位号格式：可先选中部件再执行，也可执行命令后选择一个部件、回车确认。支持 PnId／Piping，显示实际类别、格式名称、定义类别和格式表达式；非 Plant 部件或没有格式时直接提示。
+1. 在 [Releases](https://github.com/dwzcna/Pn3DKit/releases) 下载 DLL，或下载 ZIP 后解压。
+2. 将 `Pn3DKit.dll` 放入 AutoCAD 的可信目录。
+3. 在 Plant 3D 中执行 `NETLOAD`，选择该 DLL。
+4. 打开 Plant 项目和图纸，即可使用命令。批量导出也可点击 **Pn3DKit → 批量导出CAD**。
 
-命令 `EVALUATEPNTAG` 支持相同的单选方式，随后输入位号格式（可带成对外层引号），调用 SDK Evaluate 输出位号。求值前检查目标属性；缺失时逐项显示原始格式片段，例如“所选目标不含属性 #(+TargetObject.Area)”。不执行位号赋值或保存。
+升级时先退出 CAD，替换 DLL，再重新启动并加载。已经加载的程序集不能在同一 CAD 会话中直接替换。
 
-TargetObject 字段检查所选部件自身；PipeLineGroup、PipeLines 等显式类别优先通过 SDK RetrieveProperty 按完整 Where.What 读取，覆盖管线组及阀门安装管线的上下文。单字段定位失败时再核对官方管线组关系；无法确认的字段继续完整 SDK 求值，不直接误报缺失。只有明确缺失才显示缺失提示；完整求值失败时显示 SDK 状态及未定位片段。加载和求值提示包含版本号。
+## 检查一个部件的位号
 
-## 输出与恢复
+先选中一个部件，再输入 `CHECKPNTAG`；也可以先执行命令，再选择部件并按回车。
 
-- 建议路径 `%USERPROFILE%\Documents\Pn3DKit.Export\yyMMddHHmmss`，同秒存在时建议编号。确认后直接使用所选目录，不再逐图询问，也不自动换目录。
-- 保留项目相对层次，外部图纸按完整路径摘要隔离。不覆盖源图或已有 DWG；已有 Export.log／批次标记时需选择其他目录。
-- 根部 Export.log 保存运行日志；.pn3dkit-logs/ 保存逐图 JSONL、最终 JSON、LISP 表达式和完成标记。
-- LISP command-s 按“完整格式关键字 → 输出路径”导出，不输入 _F 或中间空回车。先写短名临时文件，确认命令结束、文件非空且 DWG 版本头匹配后发布。
-- 原有文档保持打开；工具打开的图纸只在确认无修改且状态明确后关闭。取消、未知状态或新修改时保留现场，累计保留三张后停止。安全结束时恢复原活动图纸。
-- CAD 路径须少于 260 字符，拒绝目录联接／符号链接。等待上限 600 秒，超时不强行中断原生命令。执行时不要手动切换项目、图纸或启动其他命令。
+插件使用该部件类别当前配置的位号格式，比较现有 Tag 和当前属性。例如：
 
-## 构建与测试
-
-需要 PowerShell 7.2+、global.json 指定的构建 SDK，以及 .NET 8 运行时／参考包。插件和测试均以 .NET 8 为目标。
-
-```powershell
-# 离线策略测试无需 CAD 或 Autodesk SDK
-pwsh -File build/Test.ps1
-
-# 默认使用本机已安装 CAD 的参考程序集
-pwsh -File build/Build-Pn3DKit.ps1
-
-# 已加载 DLL 被占用时使用独立目录
-pwsh -File build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.1 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.1
-
-# 下载清单指定的原版 SDK，校验后解压，不运行安装程序；需要 7-Zip
-$sdk = ./build/Get-PlantSdk.ps1
-./build/Build-Pn3DKit.ps1 -AutoCadManagedRoot $sdk.AutoCadManagedRoot -PlantManagedRoot $sdk.PlantManagedRoot
-
-# 打包默认交付目录，复用已通过的构建
-./build/Publish.ps1 -NoBuild
+```text
+位号一致：PT-101
 ```
 
-解决方案为 Pn3DKit.slnx，仅支持 x64 Debug／Release。Pn3DKit.Tests 链接 Models／Services／Utils 同一份策略源码，用离线宿主验证路径、格式、保存、导出、取消及文档恢复，不加载 Autodesk 程序集。CAD 适配层通过插件构建、元数据检查和授权后的实际验收验证。
+属性变化而位号尚未同步时，会显示：
 
-可通过 Plant3DSdkRoot、AutoCadManagedRoot、PlantManagedRoot 覆盖参考目录。构建会拒绝要求高于 .NET 8 的参考。Autodesk DLL 不复制到输出，也不增加独立桥接／策略 DLL。
+```text
+位号不符：现有 PT-101；按格式应为 PT-102
+TargetObject.LoopNumber：Tag 中为 101，当前属性为 102
+```
 
-使用原版 Plant 3D 2026 SDK，固定官方下载地址和 SHA-256；直接解压作为构建参考，无需运行安装程序。
+| 状态 | 含义 |
+| --- | --- |
+| 一致 | 现有位号符合格式和当前属性 |
+| 不符 | 至少一个属性段需要更新，命令同时显示期望位号 |
+| 无格式 | 部件类别未配置位号格式 |
+| 无 Tag | 没有可检查的位号；Piping 会尝试读取 LineNumberTag |
+| 临时 Tag | 位号以 `?` 开头，本次不重建 |
+| 错误 | 格式、数据关联或字段拆分无法可靠处理，显示原因及可获得的 SDK 状态 |
 
-## 自动发布
+检查保留自动编号，不重新分配号码。SLINE 的管线组属性、阀门所在管线的属性与阀门自身属性会按各自上下文处理。无法可靠拆分现有位号时显示错误，不推测结果。
 
-唯一工作流 .github/workflows/dotnet-desktop.yml 使用 Windows 2025 托管 runner：
+## 按类别批量检查
 
-- main 提交与 PR 执行两配置测试、构建、元数据检查及打包。
-- SDK 下载地址和 SHA-256 固定在 build/PlantSdk.json，仅用于构建缓存，不进入源码或发布资产。
-- 推送 v版本号 标签才创建正式 Release，标签必须匹配 Directory.Build.props；普通提交不发布。
-- Release 提供 Pn3DKit.dll、Pn3DKit-版本-AutoCAD2026-x64.zip、SHA256SUMS。ZIP 内含 DLL、使用说明和内部校验，不含 SDK、测试、符号或运行时。
+执行 `CHECKPNTAGBYCLASS`，插件扫描**当前图纸模型空间**，列出有位号格式的类别及对象数量：
 
-NETLOAD、Ribbon、完整标签点击、真实项目导出、QSAVE 和图形完整性仍须在明确授权的 CAD 项目副本中验收。离线测试和非空 DWG 不能代替实际验收。
+```text
+1 - BallValve (12)
+2 - CheckValve (5)
+请选择类别编号 [如 1,3,5-7；*=全部] <0>:
+```
+
+- 输入 `1,3,5-7` 可选择多个类别和连续区间，重复编号会自动去重。
+- 输入 `*` 检查全部列出的类别。
+- 回车或输入 `0` 结束，不执行检查。
+- 无效编号会说明原因并重新提示；按 Esc 可取消。
+
+没有位号格式的类别会单独列为“已跳过”。检查不遍历块定义、外部参照或图纸空间，也不会打开项目中的其他图纸。
+
+### 日志保存在哪里
+
+选择类别后，统一确认一次日志目录，建议位置为：
+
+```text
+系统文档目录\Pn3DKit.TagCheck\yyMMddHHmmss
+```
+
+同一时间的目录已存在时，建议名称会追加 `_01`、`_02` 等序号。
+
+- `FILEDIA=1`：命令行显示 `输出日志目录<建议路径> 或 [选择..(C)]:`。回车采用建议路径，输入 C 或点击“选择..(C)”打开文件夹选择器。
+- `FILEDIA=0`：直接在命令行输入目录，回车采用建议路径。
+- 直接写入确认的文件夹；已有同名日志时要求选择其他位置，不覆盖原文件。
+
+文件夹中生成：
+
+| 文件 | 内容 |
+| --- | --- |
+| `TagCheck.log` | 图纸、所选类别、起止时间、逐条检查结果和类别汇总 |
+| `TagCheck.csv` | 类别、句柄、现有Tag、期望Tag、状态、差异字段；可用 Excel 打开 |
+
+检查过程中定期显示进度。Esc 中断后，已经写入的结果仍保留，日志标记“已中断”并统计未处理数量。命令行显示六种状态的类别汇总，以及前 20 条不符的位号和句柄；完整结果请查看日志。
+
+## 查看格式与计算位号
+
+`GETPNTAGFORMAT` 支持预选或执行后单选，显示部件类别、格式名称及完整格式表达式。非 Plant 部件或未配置格式时会说明原因。
+
+`EVALUATEPNTAG` 采用相同选择方式，随后请求输入格式，例如：
+
+```text
+#(+TargetObject.Type)-#(+TargetObject.Area)#(TargetObject.Number^NN)
+```
+
+命令输出计算得到的位号。属性明确缺失时显示对应格式片段，例如“所选目标不含属性 #(+TargetObject.Area)”。查询和计算均不向部件赋号或保存图纸。
+
+## 批量导出普通 DWG
+
+执行 `PNDWGEXPORT`，或点击 Ribbon 中的“批量导出CAD”，依次完成：
+
+1. 选择 **P - PnId** 或 **D - Piping**。默认匹配当前图纸类型，未匹配时默认 PnId。
+2. 选择导出前是否保存修改。**Yes／Y** 为默认值；**No／N** 跳过有未保存修改的图纸。
+3. 统一确认输出目录。FILEDIA 的回车、C 选择和命令行输入方式与检查日志相同。
+4. 选择 DWG 版本：**2007、2010、2013、2018**，默认 **2013**。
+5. 等待导出，查看逐图进度、统计及输出目录中的 `Export.log`。
+
+建议目录为 `%USERPROFILE%\Documents\Pn3DKit.Export\yyMMddHHmmss`。插件直接使用确认的目录，保留项目图纸层次；不会逐个文件再询问保存位置，也不会覆盖源图或已有正式输出。
+
+**Yes 会通过 QSAVE 保存有修改的源图，后续取消不会撤销保存。** 保存失败或保存后仍有修改的图纸不导出；已保存的只读图纸允许导出。开始前请备份项目。
+
+原来打开的图纸保持打开。取消、导出状态不明确或发现新修改时，可能保留工具打开的图纸及临时文件，请根据提示检查现场。执行时不要切换项目、图纸或启动其他命令。
+
+## 常见提示
+
+- **没有当前 Plant 项目**：先在 Plant 3D 中打开项目和图纸。
+- **不是可识别的 Plant 部件**：请选择当前项目中有数据关联的部件。
+- **无法可靠拆分位号**：格式的相邻字段或现有 Tag 无法明确对应；请核对格式和属性，检查不会自动修改它们。
+- **目录已有日志**：选择其他文件夹，避免覆盖已有报告。
+- **更新后仍显示旧版本**：退出 CAD，确认替换了正确的 DLL，再重新加载。
+
+本版已进行构建和离线策略验证；真实 CAD 中的位号重建、取消响应及图纸导出完整性仍待实机验收。
+
+源码构建、SDK 配置和自动发布说明见 [开发与构建](docs/Building.md)。

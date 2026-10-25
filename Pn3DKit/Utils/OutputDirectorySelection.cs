@@ -10,9 +10,12 @@ public static class OutputDirectorySelection
     /// <param name="showDialog">显示系统文件夹选择器；取消返回空值，返回路径统一验证。</param>
     /// <param name="readLine">零值时读取目录文本，非零时读取 C 关键字或回车；取消返回空值。</param>
     /// <param name="notify">输出路径无效或冲突的原因，之后重新提示。</param>
+    /// <param name="validate">可选的用途专属目录验证；默认保持导出验证。</param>
+    /// <param name="invalidPrefix">目录验证失败时的用途提示。</param>
     /// <returns>确认后的完整目录；取消时为空。</returns>
     public static string? Select(int fileDia, string suggested, Func<string, string?> showDialog,
-        Func<string, string?> readLine, Action<string> notify)
+        Func<string, string?> readLine, Action<string> notify, Func<string, string>? validate = null,
+        string invalidPrefix = "无法使用此导出目录：")
     {
         while (true)
         {
@@ -25,10 +28,10 @@ public static class OutputDirectorySelection
             }
             string path = input.Trim();
             if (path.Length >= 2 && path[0] == '"' && path[^1] == '"') path = path[1..^1];
-            try { return ExportPolicy.ValidateOutputDirectory(path.Length == 0 ? suggested : path); }
+            try { return (validate ?? ExportPolicy.ValidateOutputDirectory)(path.Length == 0 ? suggested : path); }
             catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
             {
-                notify("无法使用此导出目录：" + ex.Message);
+                notify(invalidPrefix + ex.Message);
             }
         }
     }

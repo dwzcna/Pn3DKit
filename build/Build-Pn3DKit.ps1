@@ -1,9 +1,12 @@
 #Requires -Version 7.2
 # 插件由 CAD 的 .NET 8 宿主加载；构建只读取参考，不启动 CAD 或操作图纸。
 param(
-    [string]$Plant3DSdkRoot = 'E:\AutoCAD Plant 3D 2026 SDK',
+    [string]$AutodeskSdkRoot,
+    [string]$Plant3DSdkRoot,
     [string]$AutoCadManagedRoot,
     [string]$PlantManagedRoot,
+    [string]$PlantCommonManagedRoot,
+    [switch]$ContinuousIntegrationBuild,
     [string]$BuildOutputRoot,
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '../artifacts/plugins/Pn3DKit')
 )
@@ -11,18 +14,24 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'PluginChecks.ps1')
 $pluginRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $pluginProject = Join-Path $pluginRepo 'Pn3DKit/Pn3DKit.csproj'
-$pluginProperties = @('-p:Platform=x64','-p:NuGetAudit=false',"-p:Plant3DSdkRoot=$Plant3DSdkRoot")
+$pluginProperties = @('-p:Platform=x64','-p:NuGetAudit=false')
+if ($AutodeskSdkRoot) { $pluginProperties += "-p:AutodeskSdkRoot=$AutodeskSdkRoot" }
+if ($Plant3DSdkRoot) { $pluginProperties += "-p:Plant3DSdkRoot=$Plant3DSdkRoot" }
+if ($ContinuousIntegrationBuild) { $pluginProperties += '-p:ContinuousIntegrationBuild=true' }
 if ($AutoCadManagedRoot) { $pluginProperties += "-p:AutoCadManagedRoot=$AutoCadManagedRoot" }
 if ($PlantManagedRoot) { $pluginProperties += "-p:PlantManagedRoot=$PlantManagedRoot" }
+if ($PlantCommonManagedRoot) { $pluginProperties += "-p:PlantCommonManagedRoot=$PlantCommonManagedRoot" }
 if ($BuildOutputRoot) {
     # NETLOAD 已加载的 DLL 可能锁定默认目录；独立输出保留用户的 CAD 会话。
     $pluginIsolatedOutput = [IO.Path]::GetFullPath($BuildOutputRoot).TrimEnd([char[]]"\/") + [IO.Path]::DirectorySeparatorChar
     $pluginProperties += "-p:BaseOutputPath=$pluginIsolatedOutput"
 }
-$pluginMetadataText = & dotnet msbuild $pluginProject -nologo @pluginProperties '-getProperty:AutoCadManagedRoot,PlantManagedRoot,Version'
+$pluginMetadataText = & dotnet msbuild $pluginProject -nologo @pluginProperties '-getProperty:AutoCadManagedRoot,PlantManagedRoot,PlantCommonManagedRoot,Version'
 if ($LASTEXITCODE) { throw '无法读取 Pn3DKit 构建属性。' }
 $pluginMetadata = ($pluginMetadataText -join [Environment]::NewLine | ConvertFrom-Json).Properties
-Assert-PluginReferences $pluginMetadata.AutoCadManagedRoot $pluginMetadata.PlantManagedRoot
+& dotnet msbuild $pluginProject -nologo @pluginProperties '-t:ValidatePlantSdk' '-v:quiet'
+if ($LASTEXITCODE) { throw 'SDK 路径或文件校验失败，未读取其他目录的 CAD 程序集。' }
+Assert-PluginReferences $pluginMetadata.AutoCadManagedRoot $pluginMetadata.PlantManagedRoot $pluginMetadata.PlantCommonManagedRoot
 
 # 两配置串行增量构建，避免同一目标目录竞争，不清理用户已有输出。
 foreach ($pluginConfiguration in @('Debug','Release')) {

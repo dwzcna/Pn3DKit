@@ -42,4 +42,5 @@ $sdkDefinition.sha256 | Set-Content -LiteralPath $sdkMarker -Encoding ascii
     Root = $sdkRoot
     AutoCadManagedRoot = Join-Path $sdkRoot 'inc'
     PlantManagedRoot = Join-Path $sdkRoot 'inc-x64'
+    PlantCommonManagedRoot = Join-Path $sdkRoot 'inc-x64'
 }
