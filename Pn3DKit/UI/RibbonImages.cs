@@ -14,6 +14,59 @@ internal static class RibbonImages
     /// <summary>供紧凑布局使用的 16 DIP 图标。</summary>
     internal static ImageSource Small { get; } = Create(16);
 
+    /// <summary>七个位号图标在内存中绘制并冻结，保持 16 DIP 透明边界。</summary>
+    private static readonly IReadOnlyDictionary<string, ImageSource> TagImages =
+        new Dictionary<string, ImageSource>
+        {
+            ["CHECKPNTAG"] = CreateTag("check", false, false),
+            ["CHECKPNTAGBYCLASS"] = CreateTag("check", true, false),
+            ["CHECKPROJECTPNTAGBYCLASS"] = CreateTag("check", true, true),
+            ["EVALUATEPNTAG"] = CreateTag("evaluate", false, false),
+            ["GETPNTAGFORMAT"] = CreateTag("format", false, false),
+            ["REBUILDPNTAGBYCLASS"] = CreateTag("rebuild", true, false),
+            ["REBUILDPROJECTPNTAGBYCLASS"] = CreateTag("rebuild", true, true)
+        };
+
+    /// <summary>取得已冻结的图标，不访问外部图片或 SDK。</summary>
+    internal static ImageSource ForTagCommand(string command) => TagImages[command];
+
+    /// <summary>纸张、叠页、项目建筑分别表示单对象、批量和项目范围，前景符号区分功能。</summary>
+    private static DrawingImage CreateTag(string kind, bool multiple, bool project)
+    {
+        var group = new DrawingGroup();
+        var blue = new SolidColorBrush(MediaColor.FromRgb(44, 108, 171));
+        var foreground = new SolidColorBrush(kind == "rebuild" ? MediaColor.FromRgb(220, 133, 35)
+            : kind == "evaluate" ? MediaColor.FromRgb(140, 79, 190) : MediaColor.FromRgb(23, 156, 124));
+        using (var context = group.Open())
+        {
+            context.DrawRectangle(System.Windows.Media.Brushes.Transparent, null, new Rect(0, 0, 16, 16));
+            if (project)
+            {
+                context.DrawGeometry(new SolidColorBrush(MediaColor.FromRgb(219, 237, 252)), new MediaPen(blue, 1),
+                    Geometry.Parse("M1,14 L1,5 L5,5 L5,1 L11,1 L11,14 Z"));
+                context.DrawGeometry(null, new MediaPen(blue, 1), Geometry.Parse("M7,3 L9,3 M7,5 L9,5 M3,7 L4,7 M3,9 L4,9"));
+            }
+            else
+            {
+                if (multiple) context.DrawRoundedRectangle(null, new MediaPen(blue, 1), new Rect(1, 3, 9, 12), 1, 1);
+                context.DrawRoundedRectangle(new SolidColorBrush(MediaColor.FromRgb(239, 247, 255)),
+                    new MediaPen(blue, 1), new Rect(3, 1, 10, 12), 1, 1);
+                context.DrawGeometry(null, new MediaPen(blue, 1), Geometry.Parse("M5,4 L10,4 M5,6 L9,6"));
+            }
+            string path = kind switch
+            {
+                "check" => "M6,10 L9,13 L15,7",
+                "evaluate" => "M11,6 L7,11 L11,11 L9,15 L15,9 L11,9 Z",
+                "format" => "M7,8 L14,8 M6,12 L13,12 M9,6 L7,15 M13,6 L11,15",
+                _ => "M7,10 A4,4 0 1 1 10,15 M7,7 L7,11 L11,11"
+            };
+            context.DrawGeometry(kind == "evaluate" ? foreground : null, new MediaPen(foreground, 1.8), Geometry.Parse(path));
+        }
+        var image = new DrawingImage(group);
+        image.Freeze();
+        return image;
+    }
+
     /// <summary>按现有 SVG 坐标创建指定 DIP 大小的透明矢量图标。</summary>
     /// <param name="size">图标边长，单位为 DIP。</param>
     /// <returns>已冻结的绘图图像。</returns>

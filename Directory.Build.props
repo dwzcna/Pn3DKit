@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- 产品与信息版本使用三段，程序集与文件版本使用四段。 -->
-    <Version>0.1.6</Version>
+    <Version>0.1.7</Version>
     <InformationalVersion>$(Version)</InformationalVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <FileVersion>$(AssemblyVersion)</FileVersion>

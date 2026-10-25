@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.6 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.6
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.7 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.7
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.6 -OutputDirectory artifacts/release/0.1.6
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.7 -OutputDirectory artifacts/release/0.1.7
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils 中的同一份源码，不引用或加载 Autodesk。SDK 适配层通过插件编译、命令元数据检查及授权后的实际 CAD 验收验证。
@@ -68,7 +68,7 @@ $sdk = ./build/Get-PlantSdk.ps1
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.6/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.7/。
 
 ## 当前实现与验收
 
@@ -81,3 +81,5 @@ $sdk = ./build/Get-PlantSdk.ps1
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 
 项目级入口位于 ProjectTagCommands；PlantProjectTagAccess 使用数据行重载与全项目占用索引，拒绝提交既有待提交修改；ProjectTagDataBatch 顺序提交和回读，失败即停止。PlantProjectDrawingHost／ProjectTagDrawingBatch 复用 AutoCadHost，在应用上下文开关文档，在命令上下文校验及写入，保留完整 BlockTableId 身份。ProjectTagJournal 逐条持久化项目范围日志。数据模式不使用 DWG 撤销，不做全局 Reject；图纸模式每图一个撤销组，未保存文档全部保留。
+
+RibbonController 使用三个 RibbonRowPanel、RibbonRowBreak、原生纵向 RibbonSeparator 和原有大型导出按钮。七个位号命令通过队列执行，不发送取消前缀以保留 PICKFIRST；空闲通知同步批次与忙碌状态。RibbonImages 在 WPF 内存中绘制并冻结 16 DIP 矢量图标，区分单对象／批量／项目以及检查／计算／格式／重建，无外部图片依赖。实际行列排布、DPI 及工作空间恢复待 CAD 复测。

@@ -14,6 +14,7 @@ internal sealed class RibbonController : IDisposable
     private RibbonControl? _control;
     private RibbonTab? _ownedTab;
     private bool _pending = true;
+    private readonly List<RibbonButton> _buttons = [];
 
     /// <summary>安装事件并在下次空闲时创建 Ribbon，不强制打开用户关闭的 Ribbon。</summary>
     internal void Start()
@@ -44,29 +45,83 @@ internal sealed class RibbonController : IDisposable
     {
         try
         {
+            UpdateAvailability();
             var ribbon = ComponentManager.Ribbon;
             if (ribbon == null || (!_pending && ReferenceEquals(ribbon, _control))) return;
             _pending = false;
             _control = ribbon;
             if (ribbon.Tabs.Any(t => t.Id == TabId)) return;
-            var source = new RibbonPanelSource { Title = "项目导出" };
-            source.Items.Add(new RibbonButton
+            _buttons.Clear();
+            var source = new RibbonPanelSource { Title = "位号与导出" };
+            source.Items.Add(Column(
+                SmallButton("CHECKPNTAG", "检查元件位号", "检查所选元件的现有位号，显示当前属性差异。"),
+                SmallButton("CHECKPNTAGBYCLASS", "按类型检查元件位号", "按类别检查当前图纸模型空间的位号，生成日志和 CSV。"),
+                SmallButton("CHECKPROJECTPNTAGBYCLASS", "按类型检查项目元件位号", "检查整个项目实际使用的元件和管线组，包含未打开图纸。")));
+            source.Items.Add(Column(
+                SmallButton("EVALUATEPNTAG", "评估元件位号", "输入格式，计算所选元件对应的位号。"),
+                SmallButton("REBUILDPNTAGBYCLASS", "按类型重建元件位号", "只读预检后确认，重建当前图纸 PnId 位号，默认不保存。"),
+                SmallButton("REBUILDPROJECTPNTAGBYCLASS", "按类型重建项目元件位号", "预检整个项目，选择逐图重建或仅提交项目数据；默认 N 提交项目数据。")));
+            source.Items.Add(Column(
+                SmallButton("GETPNTAGFORMAT", "获取位号格式", "查看所选部件实际采用的位号格式。")));
+            source.Items.Add(new RibbonSeparator { SeparatorStyle = RibbonSeparatorStyle.Line });
+            var export = new RibbonButton
             {
                 Id = "Pn3DKit.BatchExport", Text = "批量导出CAD", ShowText = true, ShowImage = true,
                 Image = RibbonImages.Small, LargeImage = RibbonImages.Large,
                 Orientation = System.Windows.Controls.Orientation.Vertical,
-                ToolTip = "将当前 Plant 项目的 PnId 或 Piping 图纸导出为普通 DWG。",
-                Size = RibbonItemSize.Large, CommandHandler = new ExportCommand()
-            });
+                ToolTip = new RibbonToolTip { Title = "批量导出CAD", Command = "PNDWGEXPORT",
+                    Content = "将当前 Plant 项目的 PnId 或 Piping 图纸导出为普通 DWG。" },
+                Size = RibbonItemSize.Large, CommandHandler = new QueuedCommand("PNDWGEXPORT")
+            };
+            _buttons.Add(export);
+            source.Items.Add(export);
             _ownedTab = new RibbonTab { Id = TabId, Title = "Pn3DKit" };
             _ownedTab.Panels.Add(new RibbonPanel { Source = source });
             ribbon.Tabs.Add(_ownedTab);
+            UpdateAvailability();
         }
         catch (System.Exception ex) { BatchExportCommands.Write("Ribbon 初始化失败：" + ex.Message); }
     }
 
-    /// <summary>将 Ribbon 点击转换为标准 CAD 命令；实际批次由命令入口互斥。</summary>
-    private sealed class ExportCommand : ICommand
+    /// <summary>原生行面板形成一列，最多三行，空白单元不增加虚假按钮。</summary>
+    private static RibbonRowPanel Column(params RibbonButton[] buttons)
+    {
+        var column = new RibbonRowPanel();
+        foreach (var button in buttons)
+        {
+            if (column.Items.Count != 0) column.Items.Add(new RibbonRowBreak());
+            column.Items.Add(button);
+        }
+        return column;
+    }
+
+    /// <summary>16 DIP 矢量图标配右侧中文文字，Tooltip 保留完整命令和用途。</summary>
+    private RibbonButton SmallButton(string command, string text, string purpose)
+    {
+        var button = new RibbonButton
+        {
+            Id = "Pn3DKit." + command, Text = text, Size = RibbonItemSize.Standard,
+            ShowText = true, ShowImage = true, Image = RibbonImages.ForTagCommand(command),
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            ToolTip = new RibbonToolTip { Title = text, Command = command, Content = purpose },
+            CommandHandler = new QueuedCommand(command)
+        };
+        _buttons.Add(button);
+        return button;
+    }
+
+    /// <summary>空闲通知同步批次和命令忙碌状态，不依赖鼠标触发 WPF 重查。</summary>
+    private void UpdateAvailability()
+    {
+        bool enabled = false;
+        try { enabled = new QueuedCommand("PNDWGEXPORT").CanExecute(null); }
+        catch (System.Exception) { /* 文档关闭期间保持入口禁用，等待下一次空闲通知。 */ }
+        foreach (var button in _buttons)
+            if (button.IsEnabled != enabled) button.IsEnabled = enabled;
+    }
+
+    /// <summary>通过 CAD 命令队列执行，不发送取消前缀，保留 PICKFIRST。</summary>
+    private sealed class QueuedCommand(string command) : ICommand
     {
         /// <summary>CAD 文档和批次状态变化时由 WPF 重新检查可用性。</summary>
         public event EventHandler? CanExecuteChanged
@@ -82,7 +137,7 @@ internal sealed class RibbonController : IDisposable
         public void Execute(object? parameter)
         {
             if (CanExecute(parameter))
-                AcadApp.DocumentManager.MdiActiveDocument.SendStringToExecute("PNDWGEXPORT ", true, false, false);
+                AcadApp.DocumentManager.MdiActiveDocument.SendStringToExecute(command + " ", true, false, false);
         }
     }
 
@@ -93,5 +148,6 @@ internal sealed class RibbonController : IDisposable
         RibbonServices.RibbonPaletteSetCreated -= PaletteCreated;
         if (_palette != null) _palette.WorkspaceLoaded -= WorkspaceLoaded;
         if (_ownedTab != null) _control?.Tabs.Remove(_ownedTab);
+        _buttons.Clear();
     }
 }
