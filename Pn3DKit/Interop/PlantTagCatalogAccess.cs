@@ -230,8 +230,10 @@ internal static class PlantTagCatalogAccess
                 { DisplayName = ReadDisplayName(db, category.Key) });
             }
         }
-        return new(groups.OrderBy(x => x.ClassName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.PartName).ToArray(), warnings,
+        // 显示顺序遵循当前区域规则；同名类别再按内部身份稳定排序，不合并目标。
+        return new(groups.OrderBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(x => x.ClassName, StringComparer.Ordinal)
+            .ThenBy(x => x.PartName, StringComparer.Ordinal).ToArray(), warnings,
             () => ReferenceEquals(project, PlantApplication.CurrentProject))
         { Diagnostics = diagnostics };
     }
