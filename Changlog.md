@@ -1,5 +1,27 @@
 # Pn3DKit 需求、实现与验证记录
 
+## 0.1.1（2026-10-25）
+
+新增 EVALUATEPNTAG、GETPNTAGFORMAT。
+
+### 变更
+
+- 新增 GETPNTAGFORMAT：支持预选单个部件，或运行命令后选择并回车；读取 PnId／Piping 部件实际类别及继承的位号格式，显示格式名称、定义类别和表达式，非 Plant 部件或无格式时提示。
+- 新增 EVALUATEPNTAG：支持相同单选方式及带成对外层引号的格式输入，通过 FormatStringUtils.Evaluate 输出位号；明确缺失的属性逐项显示原始片段，不执行位号赋值或 QSAVE。
+- 显式类别字段通过 FormatToolsUtil.RetrieveProperty 按 Where.What 读取，分别处理 SLINE 的 PipeLineGroup 字段、阀门安装管线 PipeLines.Size 与阀门自身 TargetObject.Size；单字段未定位时继续完整求值，失败时保留 SDK 状态和格式片段。SDK 单字段失败后的管线组检查使用官方具名关系。
+- 产品与信息版本升为 0.1.1，程序集与文件版本为 0.1.1.0；同步说明、版本断言、三条命令登记校验和 SDK 参考校验。加载及求值提示显示程序集版本。
+- 本轮汇总此前本地追加代码并提交，保留 PNDWGEXPORT 等现有功能；仅本地提交，不推送、不创建发布标签或远端 Release。
+
+### 验证
+
+- 原版 2026 SDK 的 x64 Debug／Release 构建均通过，零警告、零错误；两配置各 83 项离线测试全部通过，版本断言为产品 0.1.1、程序集 0.1.1.0。
+- 两配置均通过 .NET 8／AMD64／三条命令登记校验；本地 ZIP 载荷、内部清单、DLL 一致性及外部 SHA-256 复算通过，Autodesk DLL 未进入交付包。PowerShell 与工作流静态检查通过。
+- 日志 artifacts/validation/0.1.1/。本轮未连接真实 CAD；SLINE／阀门的实际 SDK 求值待授权环境复测，离线用例不能替代真实 CAD 验收。
+
+### 实现阶段记录
+
+- 0.1.0～0.1.0.1 的本地追加阶段曾分别通过构建、82／83 项策略测试；用户复测确认通用关联枚举仍会将管线组及安装管线字段误报缺失，因此最终改为 SDK 上下文读取。历史日志保留于 artifacts/validation/0.1.0/ 与 artifacts/validation/0.1.0.1/，不作为本轮实机验收结论。
+
 ## 0.1.0（2026-10-25）
 
 ### 变更

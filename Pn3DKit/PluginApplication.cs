@@ -15,7 +15,8 @@ public sealed class PluginApplication : IExtensionApplication
     {
         _ribbon = new RibbonController();
         _ribbon.Start();
-        BatchExportCommands.Write("Pn3DKit 已加载，LISP command-s 导出就绪。输入 PNDWGEXPORT 批量导出项目图纸。");
+        BatchExportCommands.Write($"Pn3DKit {typeof(PluginApplication).Assembly.GetName().Version} 已加载。"
+            + "命令：PNDWGEXPORT、GETPNTAGFORMAT、EVALUATEPNTAG。");
     }
 
     /// <summary>在 CAD 退出时解除 Ribbon 和应用事件，不关闭或保存图纸。</summary>

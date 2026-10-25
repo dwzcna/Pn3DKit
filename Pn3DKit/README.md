@@ -1,4 +1,4 @@
-# Pn3DKit 0.1.0
+# Pn3DKit 0.1.1
 
 AutoCAD／Plant 3D 2026 的 Windows x64 / .NET 8 NETLOAD 插件。Autodesk 程序集及运行时由 CAD 提供。
 
@@ -13,6 +13,12 @@ AutoCAD／Plant 3D 2026 的 Windows x64 / .NET 8 NETLOAD 插件。Autodesk 程�
 7. 查看统计和所选目录根部 Export.log；.pn3dkit-logs/ 保存逐图结果、JSON 报告、LISP 和状态文件。
 
 QSAVE 会改写源图，后续失败或取消不会撤销保存。请先备份，使用明确授权的项目副本检查图形完整性、外参和专业对象转换。缺少 Plant 环境或当前项目时命令会说明原因并结束。
+
+`GETPNTAGFORMAT` 读取单个部件的位号格式：先选中部件再执行，或执行命令后选择一个部件、回车确认。显示项目部分、实际类别、格式名称、定义类别及表达式；非 Plant 部件或未配置格式时提示。查询不保存或修改图纸。
+
+`EVALUATEPNTAG` 预选或交互选择一个部件后，输入位号格式，输出 SDK 计算的位号。支持成对外层引号；缺失目标属性时逐项显示原始格式片段，例如“所选目标不含属性 #(+TargetObject.Area)”。不执行位号赋值或保存。
+
+TargetObject 字段检查自身；PipeLineGroup、PipeLines 等显式类别使用 SDK RetrieveProperty 读取完整类别上下文，适用于 SLINE 的管线组及阀门安装管线。无法定位的字段保留给完整 SDK 求值，不直接报告缺失；只有明确缺失才提前提示。求值失败时保留 SDK 状态与原始片段；加载和求值均显示 0.1.1.0 程序集版本号。
 
 ## 输出与恢复
 

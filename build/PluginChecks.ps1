@@ -67,7 +67,8 @@ function Get-PluginMetadata([string]$Path, [switch]$IncludeCommands) {
 function Assert-PluginReferences([string]$AutoCadManagedRoot, [string]$PlantManagedRoot) {
     $referencePaths = @('AcCoreMgd.dll','AcDbMgd.dll','AcMgd.dll','AdWindows.dll','AcWindows.dll') |
         ForEach-Object { Join-Path $AutoCadManagedRoot $_ }
-    $referencePaths += Join-Path $PlantManagedRoot 'PnPProjectManagerMgd.dll'
+    $referencePaths += @('PnPProjectManagerMgd.dll','PnPDataLinks.dll','PnPDataObjects.dll','PnPCommonDbxMgd.dll') |
+        ForEach-Object { Join-Path $PlantManagedRoot $_ }
     foreach ($referencePath in $referencePaths) {
         $referenceMetadata = Get-PluginMetadata $referencePath
         foreach ($referenceFramework in @('System.Runtime','PresentationFramework','PresentationCore','WindowsBase')) {
@@ -84,8 +85,9 @@ function Assert-PluginReferences([string]$AutoCadManagedRoot, [string]$PlantMana
 function Test-PluginAssembly([string]$Path, [string]$Version) {
     $assemblyMetadata = Get-PluginMetadata $Path -IncludeCommands
     $assemblyFileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
-    if ($assemblyMetadata.Version -ne "$Version.0" -or
-        $assemblyFileVersion.FileVersion -ne "$Version.0" -or $assemblyFileVersion.ProductVersion -ne $Version) {
+    $expectedAssemblyVersion = if (($Version -split '\.').Count -eq 3) { "$Version.0" } else { $Version }
+    if ($assemblyMetadata.Version -ne $expectedAssemblyVersion -or
+        $assemblyFileVersion.FileVersion -ne $expectedAssemblyVersion -or $assemblyFileVersion.ProductVersion -ne $Version) {
         throw '插件程序集、文件或产品版本不符。'
     }
     if ($assemblyMetadata.Architecture -ne 'Amd64' -or
@@ -94,7 +96,8 @@ function Test-PluginAssembly([string]$Path, [string]$Version) {
         throw '插件必须为 AMD64 / .NET 8。'
     }
     if (!$assemblyMetadata.ExtensionApplication -or !$assemblyMetadata.CommandClass -or
-        $assemblyMetadata.Commands.Count -ne 1 -or $assemblyMetadata.Commands[0] -ne 'PNDWGEXPORT') {
+        $assemblyMetadata.Commands.Count -ne 3 -or
+        (@($assemblyMetadata.Commands | Sort-Object) -join '|') -cne 'EVALUATEPNTAG|GETPNTAGFORMAT|PNDWGEXPORT') {
         throw '插件加载入口或公开命令注册不符。'
     }
     return $assemblyMetadata

@@ -18,7 +18,7 @@ if (!$NoBuild) {
 $publishVersionText = & dotnet msbuild (Join-Path $publishRepo 'Pn3DKit/Pn3DKit.csproj') -nologo '-getProperty:Version'
 if ($LASTEXITCODE) { throw '无法读取发布版本。' }
 $publishVersion = ($publishVersionText -join [Environment]::NewLine).Trim()
-if ($publishVersion -notmatch '^\d+\.\d+\.\d+$') { throw '发布版本必须为三段数字。' }
+if ($publishVersion -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') { throw '发布版本必须为三段或四段数字。' }
 $publishInput = [IO.Path]::GetFullPath($InputDirectory)
 Test-PluginDelivery $publishInput $publishVersion
 $publishOutput = [IO.Path]::GetFullPath($OutputDirectory)

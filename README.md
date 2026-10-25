@@ -1,6 +1,6 @@
 # Pn3DKit
 
-当前版本 **0.1.0**，程序集版本 **0.1.0.0**。
+当前版本 **0.1.1**，程序集及文件版本 **0.1.1.0**。
 
 AutoCAD／Plant 3D 2026 的 Windows x64 / .NET 8 NETLOAD 插件，按当前 Plant 项目的 PnId／Piping 清单批量导出普通 AutoCAD DWG。
 
@@ -17,6 +17,12 @@ AutoCAD／Plant 3D 2026 的 Windows x64 / .NET 8 NETLOAD 插件，按当前 Plan
 QSAVE 会改写源图，后续失败或取消不会撤销保存。请先备份，在明确授权的项目副本检查外参、专业对象转换及图形完整性。普通 AutoCAD 缺少 Plant 环境或当前项目时，命令提示原因并结束。
 
 更新 DLL 后须重启 CAD 再 NETLOAD，同一会话重复加载不能替换已加载程序集。
+
+命令 `GETPNTAGFORMAT` 读取单个部件的位号格式：可先选中部件再执行，也可执行命令后选择一个部件、回车确认。支持 PnId／Piping，显示实际类别、格式名称、定义类别和格式表达式；非 Plant 部件或没有格式时直接提示。
+
+命令 `EVALUATEPNTAG` 支持相同的单选方式，随后输入位号格式（可带成对外层引号），调用 SDK Evaluate 输出位号。求值前检查目标属性；缺失时逐项显示原始格式片段，例如“所选目标不含属性 #(+TargetObject.Area)”。不执行位号赋值或保存。
+
+TargetObject 字段检查所选部件自身；PipeLineGroup、PipeLines 等显式类别优先通过 SDK RetrieveProperty 按完整 Where.What 读取，覆盖管线组及阀门安装管线的上下文。单字段定位失败时再核对官方管线组关系；无法确认的字段继续完整 SDK 求值，不直接误报缺失。只有明确缺失才显示缺失提示；完整求值失败时显示 SDK 状态及未定位片段。加载和求值提示包含版本号。
 
 ## 输出与恢复
 
@@ -39,7 +45,7 @@ pwsh -File build/Test.ps1
 pwsh -File build/Build-Pn3DKit.ps1
 
 # 已加载 DLL 被占用时使用独立目录
-pwsh -File build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.0 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.0
+pwsh -File build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.1 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.1
 
 # 下载清单指定的原版 SDK，校验后解压，不运行安装程序；需要 7-Zip
 $sdk = ./build/Get-PlantSdk.ps1

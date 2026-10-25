@@ -45,6 +45,18 @@
       <HintPath>$(PlantManagedRoot)\PnPProjectManagerMgd.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="PnPDataLinks">
+      <HintPath>$(PlantManagedRoot)\PnPDataLinks.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PnPDataObjects">
+      <HintPath>$(PlantManagedRoot)\PnPDataObjects.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PnPCommonDbxMgd">
+      <HintPath>$(PlantManagedRoot)\PnPCommonDbxMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
   <Target Name="ValidatePlantSdk" BeforeTargets="ResolveReferences">
     <Error Condition="!Exists('$(AutoCadManagedRoot)\AcCoreMgd.dll') or !Exists('$(PlantManagedRoot)\PnPProjectManagerMgd.dll')" Text="缺少 AutoCAD/Plant 3D 2026 的 .NET 8 参考程序集，请设置 AutoCadManagedRoot、PlantManagedRoot 或 Plant3DSdkRoot。" />
