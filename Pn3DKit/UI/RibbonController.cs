@@ -75,7 +75,18 @@ internal sealed class RibbonController : IDisposable
             };
             _buttons.Add(export);
             source.Items.Add(export);
-            _ownedTab = new RibbonTab { Id = TabId, Title = "Pn3DKit" };
+            var fastPanel = new RibbonButton
+            {
+                Id = "Pn3DKit.FastPanel", Text = "PN快速特性", ShowText = true, ShowImage = true,
+                Image = RibbonImages.FastPanelSmall, LargeImage = RibbonImages.FastPanelLarge,
+                Orientation = System.Windows.Controls.Orientation.Vertical, Size = RibbonItemSize.Large,
+                ToolTip = new RibbonToolTip { Title = "PN快速特性", Command = "PNFASTPANEL",
+                    Content = "显示自定义 Plant 属性；单选按 SDK 权限编辑，多选查看共同值，不自动保存图纸。" },
+                CommandHandler = new QueuedCommand("PNFASTPANEL")
+            };
+            _buttons.Add(fastPanel);
+            source.Items.Add(fastPanel);
+            _ownedTab = new RibbonTab { Id = TabId, Title = "Pn3D工具箱" };
             _ownedTab.Panels.Add(new RibbonPanel { Source = source });
             ribbon.Tabs.Add(_ownedTab);
             UpdateAvailability();

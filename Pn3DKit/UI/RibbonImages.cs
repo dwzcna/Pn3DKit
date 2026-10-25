@@ -14,6 +14,32 @@ internal static class RibbonImages
     /// <summary>供紧凑布局使用的 16 DIP 图标。</summary>
     internal static ImageSource Small { get; } = Create(16);
 
+    /// <summary>PN快速特性大图标，内存绘制的属性面板与两列字段。</summary>
+    internal static ImageSource FastPanelLarge { get; } = CreateFastPanel(32);
+    /// <summary>PN快速特性小图标，供 Ribbon 缩放使用。</summary>
+    internal static ImageSource FastPanelSmall { get; } = CreateFastPanel(16);
+
+    /// <summary>绘制固定边界的可停靠属性面板矢量，无外部图片依赖。</summary>
+    private static DrawingImage CreateFastPanel(double size)
+    {
+        var drawing = new DrawingGroup { Transform = new ScaleTransform(size / 32, size / 32) };
+        var blue = new SolidColorBrush(MediaColor.FromRgb(40, 111, 180));
+        var mint = new SolidColorBrush(MediaColor.FromRgb(72, 188, 157));
+        using (var context = drawing.Open())
+        {
+            context.DrawRectangle(System.Windows.Media.Brushes.Transparent, null, new Rect(0, 0, 32, 32));
+            context.DrawRoundedRectangle(new SolidColorBrush(MediaColor.FromRgb(237, 246, 255)),
+                new MediaPen(blue, 1.5), new Rect(3, 3, 26, 26), 2, 2);
+            context.DrawRectangle(blue, null, new Rect(4, 4, 24, 5));
+            context.DrawRectangle(mint, null, new Rect(21, 4, 7, 24));
+            context.DrawGeometry(null, new MediaPen(blue, 1.5),
+                Geometry.Parse("M7,13 L17,13 M7,18 L17,18 M7,23 L17,23 M12,11 L12,26"));
+            context.DrawGeometry(null, new MediaPen(System.Windows.Media.Brushes.White, 1.5),
+                Geometry.Parse("M23,12 L26,12 M23,17 L26,17 M23,22 L26,22"));
+        }
+        var image = new DrawingImage(drawing); image.Freeze(); return image;
+    }
+
     /// <summary>七个位号图标在内存中绘制并冻结，保持 16 DIP 透明边界。</summary>
     private static readonly IReadOnlyDictionary<string, ImageSource> TagImages =
         new Dictionary<string, ImageSource>

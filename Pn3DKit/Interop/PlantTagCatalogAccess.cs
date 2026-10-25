@@ -45,7 +45,7 @@ internal sealed record PlantTagScan(IReadOnlyList<PlantTagClassGroup> Groups,
 internal static class PlantTagCatalogAccess
 {
     /// <summary>在 CAD 主线程读取类别表显示名称；普通读取错误回退类名，取消继续传播。</summary>
-    private static string ReadDisplayName(PnPDatabase database, string className)
+    internal static string ReadDisplayName(PnPDatabase database, string className)
     {
         try
         {

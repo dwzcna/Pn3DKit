@@ -16,13 +16,19 @@ public sealed class PluginApplication : IExtensionApplication
         _ribbon = new RibbonController();
         _ribbon.Start();
         BatchExportCommands.Write($"Pn3DKit {typeof(PluginApplication).Assembly.GetName().Version} 已加载。"
-            + "命令：PNDWGEXPORT、GETPNTAGFORMAT、EVALUATEPNTAG、CHECKPNTAG、CHECKPNTAGBYCLASS、REBUILDPNTAGBYCLASS、CHECKPROJECTPNTAGBYCLASS、REBUILDPROJECTPNTAGBYCLASS。");
+            + "命令：PNDWGEXPORT、GETPNTAGFORMAT、EVALUATEPNTAG、CHECKPNTAG、CHECKPNTAGBYCLASS、REBUILDPNTAGBYCLASS、CHECKPROJECTPNTAGBYCLASS、REBUILDPROJECTPNTAGBYCLASS、PNFASTPANEL。");
     }
 
     /// <summary>在 CAD 退出时解除 Ribbon 和应用事件，不关闭或保存图纸。</summary>
     public void Terminate()
     {
-        _ribbon?.Dispose();
-        _ribbon = null;
+        try { FastPanelController.Shutdown(); }
+        catch (System.Exception ex) { System.Diagnostics.Trace.WriteLine("PN快速特性退出清理：" + ex.Message); }
+        finally
+        {
+            try { _ribbon?.Dispose(); }
+            catch (System.Exception ex) { System.Diagnostics.Trace.WriteLine("Pn3DKit Ribbon 退出清理：" + ex.Message); }
+            finally { _ribbon = null; }
+        }
     }
 }
