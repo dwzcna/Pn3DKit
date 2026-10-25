@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <!-- 插件及测试共享版本；产品号三段，程序集和文件号四段。 -->
+    <Version>0.1.0</Version>
+    <InformationalVersion>$(Version)</InformationalVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <FileVersion>$(Version).0</FileVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- 按配置和平台隔离 NuGet 还原图，避免 Debug/Release 互相覆盖。 -->
+    <MSBuildProjectExtensionsPath>$(MSBuildProjectDirectory)\obj\restore\$(Configuration)\$(Platform)\</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>

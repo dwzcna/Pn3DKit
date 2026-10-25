@@ -1,0 +1,30 @@
+# Pn3DKit 需求、实现与验证记录
+
+## 0.1.0（2026-10-25）
+
+### 变更
+
+- 独立为 AutoCAD／Plant 3D 2026 x64 / .NET 8 插件仓库；解决方案 Pn3DKit.slnx 只包含插件与 Pn3DKit.Tests。测试与 CAD 宿主同为 .NET 8，继续链接插件策略源码，不需要 Autodesk SDK。
+- 保留 PNDWGEXPORT、Ribbon“批量导出CAD”、PnId／Piping 识别、条件 QSAVE、四种格式、FILEDIA 与 [选择..(C)]、精确目录、Export.log、临时 DWG 保护及文档恢复行为。
+- 清理无关源码、测试、脚本和说明；保留本地 AGENTS.md 并忽略，不进入仓库。产品版本 0.1.0，程序集及文件版本 0.1.0.0。
+- 使用远端已有 .github/workflows/dotnet-desktop.yml。main／PR 验证两配置测试和插件构建；版本标签校验后自动创建正式 GitHub Release。
+- SDK 固定来源与 SHA-256，直接解压并校验托管参考，仅用于构建缓存。Release 提供单 DLL、含说明及内部校验的 ZIP、外部 SHA256SUMS，不包含 SDK／测试／符号／运行时。
+- 源图保存、真实图形转换和 CAD 内交互仍须在明确授权的项目副本验收。
+
+### 验证
+
+- 本机 .NET 8 离线测试 Debug／Release 各 71 项全部通过。初次还原遇到网络／TLS 失败，补齐官方 NuGet 包缓存后通过，未改变仓库包源。
+- 使用 SHA-256 已固定的原版 2026 SDK 直接解压，六个参考均兼容 .NET 8；插件 Debug／Release 构建零警告、零错误。解决方案两配置校验通过。
+- 两配置程序集均为 0.1.0.0／AMD64／.NET 8，入口属性及唯一公开命令 PNDWGEXPORT 校验通过。交付仅含 DLL、说明及内部校验；ZIP 逐项与外部 SHA-256 复算通过。
+- 用户确认沿用原版 Plant 3D 2026 SDK，删除其他运行时的相关描述；脚本已验证会拒绝不兼容参考和不匹配哈希。
+- GitHub Actions 与远端附件校验待本轮推送后执行；真实 CAD 验收待授权。日志 artifacts/validation/0.1.0/。
+- 原有远端 main 历史作为提交基线；本轮已授权普通推送 main 和 v0.1.0，禁止强制推送。
+
+## 0.0.x 插件阶段归档
+
+- 实现 NETLOAD、延迟访问 Plant API、Ribbon 延迟创建与工作空间恢复；最终公开命令 PNDWGEXPORT，目标 .NET 8 / x64，Autodesk 程序集由宿主提供。
+- 按 ProjectParts／ResolvedFilePath 获取、去重及识别图纸，支持 P／D 默认和完整点击标签；Yes／No 与 Y／N 输入共存，有修改时仅保存一次，No 跳过该图继续。
+- 根据真实 Plant 2026 提示修订为完整年份关键字直接接输出文件；LISP command-s 配合完成标记、LISP 结束与空闲事件判定完成，验证 DWG 文件头后发布。
+- 增加精确目录、项目层次、外部图纸摘要隔离、根部 Export.log、增量结果、短名临时输出、源图保护、文档所有权、取消保留、系统变量／原活动图恢复及三张保留上限。
+- FILEDIA=0 保持纯命令行；FILEDIA=1 先提示建议目录与 [选择..(C)]，只有 C 才打开系统文件夹选择器，回车默认、取消结束。移除自定义窗口，Ribbon 使用上图标下文字。
+- 插件曾通过双配置构建、策略测试及交付校验，历史结果不作为 0.1.0 验证结论。真实 NETLOAD、标签点击、两类项目、源图格式和图形完整性仍待授权验收。

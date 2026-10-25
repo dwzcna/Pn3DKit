@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="Pn3DKit/Pn3DKit.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="Pn3DKit.Tests/Pn3DKit.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
+</Solution>
