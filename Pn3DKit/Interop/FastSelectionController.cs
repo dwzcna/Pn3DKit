@@ -25,7 +25,8 @@ internal sealed class FastSelectionController : IDisposable
     private ObjectId[] _targets = [];
     private PnObjectProperties? _single;
     private (PnEditRequest Request, EditLease Lease)? _pending;
-    private bool _dirty = true, _paused, _inside, _disposed, _writing;
+    private bool _dirty = true, _paused, _inside, _disposed, _writing, _applyingValue;
+    private ObjectId _writeTarget;
     private long _epoch;
     private string _notice = "";
 
@@ -52,7 +53,12 @@ internal sealed class FastSelectionController : IDisposable
     private void Changed(object? sender, EventArgs args) => RequestRefresh();
     private void DocumentChanged(object? sender, DocumentCollectionEventArgs args) => RequestRefresh();
     private void CommandChanged(object? sender, CommandEventArgs args) => RequestRefresh();
-    private void ObjectChanged(object? sender, ObjectEventArgs args) => RequestRefresh();
+    /// <summary>最后写前校验通过后的自身修改只要求刷新，外部对象变化仍使编辑过期。</summary>
+    private void ObjectChanged(object? sender, ObjectEventArgs args)
+    {
+        if (_applyingValue && args.DBObject.ObjectId == _writeTarget) { _dirty = true; return; }
+        RequestRefresh();
+    }
     private void ObjectErased(object? sender, ObjectErasedEventArgs args) => RequestRefresh();
 
     /// <summary>UI 只排队显式提交，空闲时重新验证；无效票据不会延期自动写入。</summary>
@@ -177,12 +183,12 @@ internal sealed class FastSelectionController : IDisposable
         if (_disposed) return;
         using var lease = BatchRunGate.TryEnter();
         if (lease == null) { _notice = "未写入：已有 Pn3DKit 批次。"; RequestRefresh(); _view.ResumeInputFocus(); return; }
-        _writing = true; _view.SuspendInputFocus();
+        _writing = true;
         try
         {
             var host = new AutoCadHost(() => !_disposed && edit.Access.IsCurrent);
             var drawing = host.OriginalDrawing ?? throw new InvalidOperationException("当前没有活动图纸。");
-            string actual = await host.InDocumentAsync(drawing, document =>
+            string actual = await host.InLockedDocumentAsync(drawing, document =>
             {
                 EnsureEdit(edit);
                 var selected = Selection(document);
@@ -209,6 +215,8 @@ internal sealed class FastSelectionController : IDisposable
                     if (latest.Length != 1 || latest[0] != edit.Context.Target)
                         throw new InvalidOperationException("写入前选择对象已变化。");
                     if (!_view.ReadSpecs().Contains(spec)) throw new InvalidOperationException("写入前属性路径已变化。");
+                    // 同步 SetProperties 随后执行；仅此时把目标自身的修改事件视为本次写入。
+                    _writeTarget = edit.Context.Target; _applyingValue = true;
                 });
             });
             _notice = request.Path + " 已更新为 " + actual + "；未保存图纸。";
@@ -216,6 +224,7 @@ internal sealed class FastSelectionController : IDisposable
         catch (System.Exception ex) { _notice = "提交失败：" + FastPropertyAccess.Describe(ex); }
         finally
         {
+            _applyingValue = false; _writeTarget = ObjectId.Null;
             _writing = false; RequestRefresh();
             if (!_disposed)
             {

@@ -76,19 +76,57 @@ public sealed class FastPropertiesViewTests
         view.ClearInputFocus(); Assert.False(view.HasInputFocus); Assert.False(requests[^1]);
     });
 
-    /// <summary>回车只提交一次并在进入 CAD 上下文前释放保留；后续失焦不重复写入。</summary>
+    /// <summary>回车只提交一次且保留焦点；后续失焦不重复写入，回读后继续编辑。</summary>
     [Fact]
-    public void EnterSubmitsCommentOnceAndReleasesFocus() => Sta(() =>
+    public void EnterSubmitsCommentOnceAndKeepsFocus() => Sta(() =>
     {
         var (view, _, value) = Comment();
         var requests = new List<PnEditRequest>(); bool retain = false;
         view.EditRequested += requests.Add; view.InputFocusChanged += keep => retain = keep;
         Focus(value, true); Assert.True(retain); value.Text = "新备注"; Key(value, System.Windows.Input.Key.Enter);
-        Assert.Single(requests); Assert.False(retain); Assert.True(value.IsReadOnly);
+        Assert.Single(requests); Assert.True(retain); Assert.True(value.IsReadOnly);
         Assert.Equal("TargetObject.Comment", requests[0].Path);
         Assert.Equal("原备注", requests[0].Original); Assert.Equal("新备注", requests[0].Value);
         Focus(value, false); Assert.Single(requests);
         view.ResumeInputFocus(); ShowComment(view, "新备注"); Assert.False(value.IsReadOnly);
+    });
+
+    /// <summary>Enter 在发出编辑请求前已被消费，排队期间保留输入焦点，避免按键进入 CAD。</summary>
+    [Fact]
+    public void EnterIsHandledBeforeEditRequest() => Sta(() =>
+    {
+        var (view, _, value) = Comment();
+        Focus(value, true); value.Text = "更新";
+        var key = new KeyEventArgs(Keyboard.PrimaryDevice, new TestSource(), 0, System.Windows.Input.Key.Enter)
+            { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        int count = 0;
+        view.EditRequested += _ => { count++; Assert.True(key.Handled); Assert.True(view.HasInputFocus); };
+        value.RaiseEvent(key);
+        Assert.True(key.Handled); Assert.Equal(1, count);
+    });
+
+    /// <summary>提交回读后焦点仍在原值格，可连续修改且每次使用新的原值和票据。</summary>
+    [Fact]
+    public void ReadbackAllowsAnotherEditWithoutLosingFocus() => Sta(() =>
+    {
+        var (view, _, value) = Comment();
+        var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
+        Focus(value, true); value.Text = "第一次"; Key(value, System.Windows.Input.Key.Enter);
+        ShowComment(view, "第一次");
+        Assert.True(view.HasInputFocus); Assert.False(value.IsReadOnly); Assert.Equal("第一次", value.Text);
+        value.Text = "第二次"; Key(value, System.Windows.Input.Key.Enter);
+        Assert.Equal(2, edits.Count); Assert.Equal("第一次", edits[1].Original);
+        Assert.NotEqual(edits[0].Token, edits[1].Token);
+    });
+
+    /// <summary>提交失败后回显 SDK 实际值，保持选择对应的表格及输入焦点，不伪造成功值。</summary>
+    [Fact]
+    public void FailedCommitReadbackKeepsFocusAndActualValue() => Sta(() =>
+    {
+        var (view, _, value) = Comment();
+        Focus(value, true); value.Text = "失败输入"; Key(value, System.Windows.Input.Key.Enter);
+        view.ShowStatus("提交失败：字段长度超限"); ShowComment(view, "原备注");
+        Assert.True(view.HasInputFocus); Assert.Equal("原备注", value.Text); Assert.False(value.IsReadOnly);
     });
 
     /// <summary>空 Comment 可编辑，Esc 后连续回车和失焦不把占位破折号写成备注。</summary>

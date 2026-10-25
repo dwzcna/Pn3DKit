@@ -79,6 +79,24 @@ internal sealed class AutoCadHost : ICadHost
         return completion.Task;
     }
 
+    /// <summary>在主线程应用上下文锁定目标文档并执行属性面板操作，保留 PICKFIRST 和面板焦点。</summary>
+    /// <remarks>不启动命令；项目和完整数据库身份在锁前后核对，异常作为任务失败返回。</remarks>
+    /// <param name="drawing">仍有效且活动的目标图纸。</param>
+    /// <param name="action">同步读写回调，不允许等待或切换文档。</param>
+    /// <returns>回调结果；上下文或写入失败时返回失败任务。</returns>
+    internal Task<T> InLockedDocumentAsync<T>(ICadDrawing drawing, Func<Document, T> action) =>
+        InApplicationAsync(() =>
+        {
+            EnsureProject();
+            EnsureActive(drawing);
+            using (((Drawing)drawing).Document.LockDocument())
+            {
+                EnsureProject();
+                EnsureActive(drawing);
+                return action(((Drawing)drawing).Document);
+            }
+        });
+
     /// <summary>在目标文档命令上下文中运行同步操作；锁与异常均限制在回调内部。</summary>
     internal async Task<T> InDocumentAsync<T>(ICadDrawing drawing, Func<Document, T> action)
     {

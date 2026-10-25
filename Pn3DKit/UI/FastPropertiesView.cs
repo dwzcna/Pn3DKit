@@ -48,6 +48,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        KeyboardNavigation.SetTabNavigation(_table, KeyboardNavigationMode.Cycle);
         _objectType = Text("未选择对象", new Thickness(9, 8, 9, 8));
         _objectType.TextTrimming = TextTrimming.CharacterEllipsis;
         var summary = Surface(_objectType); summary.Margin = new Thickness(0, 2, 0, 12);
@@ -171,7 +172,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         input.LostKeyboardFocus += (_, e) => { TrackInputFocus(e.NewFocus); CommitPath(row); };
         input.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Enter) { CommitPath(row); e.Handled = true; }
+            if (e.Key == Key.Enter) { e.Handled = true; CommitPath(row); }
             else if (e.Key == Key.Escape)
             {
                 _updating = true; input.Text = row.Committed; _updating = false;
@@ -201,11 +202,11 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         };
         value.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Enter) { CommitValue(row); e.Handled = true; }
+            if (e.Key == Key.Enter) { e.Handled = true; CommitValue(row); }
             else if (e.Key == Key.Escape)
             {
-                if (row.Cell != null) value.Text = row.Cell.Value.Raw;
                 e.Handled = true;
+                if (row.Cell != null) value.Text = row.Cell.Value.Raw;
             }
         };
         _rows.Add(row); _table.Children.Add(container); _active = row;
@@ -248,7 +249,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         string? path = PnPropertyPolicy.Normalize(cell.Spec.Input, out _);
         if (path == null || cell.EditToken == Guid.Empty) return;
         var request = new PnEditRequest(cell.EditToken, row.Id, row.Revision, path, cell.Value.Raw, value);
-        SuspendEditing(); SuspendInputFocus(); ShowStatus("正在提交；不自动保存图纸…");
+        SuspendEditing(); ShowStatus("正在提交；不自动保存图纸…");
         EditRequested?.Invoke(request);
     }
 
