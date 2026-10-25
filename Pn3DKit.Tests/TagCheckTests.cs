@@ -253,9 +253,9 @@ public sealed class TagCheckTests
         Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes.Take(3));
         var records = ParseCsv(Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3));
         Assert.Equal(2, records.Count);
-        Assert.Equal(new[] { "类别", "句柄", "现有Tag", "期望Tag", "状态", "差异字段" }, records[0]);
-        Assert.Equal(result.Subject.ExistingTag, records[1][2]);
-        Assert.Equal(result.Details, records[1][5]);
+        Assert.Equal(new[] { "项目部分", "类别", "数据行ID", "句柄", "现有Tag", "期望Tag", "状态", "差异字段" }, records[0]);
+        Assert.Equal(result.Subject.ExistingTag, records[1][4]);
+        Assert.Equal(result.Details, records[1][7]);
         Assert.Contains("中文 图纸.dwg", Encoding.UTF8.GetString(ReadShared(journal.LogPath)));
     }
 

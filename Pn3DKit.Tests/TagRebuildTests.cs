@@ -424,7 +424,7 @@ public sealed class TagRebuildTests
                 byte[] bytes = buffer.ToArray();
                 Assert.Equal(new byte[] { 0xef, 0xbb, 0xbf }, bytes[..3]);
                 string csv = Encoding.UTF8.GetString(bytes[3..]);
-                Assert.StartsWith("类别,句柄,原Tag,新Tag,动作,原因,差异字段\r\n", csv);
+                Assert.StartsWith("项目部分,类别,数据行ID,句柄,原Tag,新Tag,动作,原因,差异字段\r\n", csv);
                 Assert.Contains("\"原,\"\"号\n中文\"", csv);
                 Assert.Contains("待重建", csv);
                 Assert.Contains("已更新", csv);

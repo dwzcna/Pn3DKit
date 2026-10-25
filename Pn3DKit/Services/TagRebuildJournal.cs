@@ -34,8 +34,8 @@ public sealed class TagRebuildJournal : ITagRebuildJournal, IDisposable
             _log.WriteLine("图纸：" + drawing);
             _log.WriteLine("所选类别：" + string.Join("、", classes));
             _log.WriteLine("开始时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
-            _log.WriteLine("CSV 为追加历史：同句柄最后一条为最终动作。仅写 PnId.Tag，不处理 Piping 或 PipeLines 及其子类。");
-            _csv.WriteLine("类别,句柄,原Tag,新Tag,动作,原因,差异字段");
+            _log.WriteLine("CSV 为追加历史：同项目部分及数据行ID最后一条为最终动作。仅写 PnId.Tag，包含 SLINE 和管线组，不处理 Piping 管线号。");
+            _csv.WriteLine("项目部分,类别,数据行ID,句柄,原Tag,新Tag,动作,原因,差异字段");
             Flush();
         }
         catch { Dispose(); throw; }
@@ -45,9 +45,9 @@ public sealed class TagRebuildJournal : ITagRebuildJournal, IDisposable
     public void Append(TagRebuildRecord record)
     {
         var item = record.Item.Check;
-        _log.WriteLine($"[{item.Subject.ProjectPart} / {item.Subject.ClassName} / 句柄 {item.Subject.Handle}] {record.ActionText} | {item.Subject.ExistingTag} → {item.ExpectedTag} | {record.Reason}");
+        _log.WriteLine($"[{item.Subject.ProjectPart} / {item.Subject.ClassName} / {item.Subject.Identity}] {record.ActionText} | {item.Subject.ExistingTag} → {item.ExpectedTag} | {record.Reason}");
         if (item.Details.Length != 0) _log.WriteLine(item.Details);
-        _csv.WriteLine(string.Join(",", new[] { item.Subject.ClassName, item.Subject.Handle,
+        _csv.WriteLine(string.Join(",", new[] { item.Subject.ProjectPart, item.Subject.ClassName, item.Subject.RowId, item.Subject.Handle,
             item.Subject.ExistingTag, item.ExpectedTag, record.ActionText, record.Reason, item.Details }
             .Select(TagCheckJournal.EscapeCsv)));
         Flush();

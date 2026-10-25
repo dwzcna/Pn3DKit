@@ -18,7 +18,8 @@ public static class TagRebuildPolicy
         if (item.Check.Status is not (TagCheckStatus.Mismatch or TagCheckStatus.Consistent))
             return item.Check.StatusText + (item.Check.Error == null ? "" : "：" + item.Check.Error);
         if (string.IsNullOrWhiteSpace(item.Check.ExpectedTag)) return "期望 Tag 为空";
-        if (item.Check.ExpectedTag.Contains('?')) return "期望 Tag 含 ?，有属性为空";
+        if (item.Check.ExpectedTag.Contains('?') && item.Check.Subject.Kind == TagTargetKind.Component)
+            return "期望 Tag 含 ?，有属性为空";
         return null;
     }
 

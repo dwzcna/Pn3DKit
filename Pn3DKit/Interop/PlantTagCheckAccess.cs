@@ -12,13 +12,7 @@ using CadException = Autodesk.AutoCAD.Runtime.Exception;
 
 namespace Pn3DKit.Interop;
 
-/// <summary>缓存同一项目部分和类别的模型空间对象，不持有打开的数据库对象。</summary>
-internal sealed record PlantTagClassGroup(string PartName, string ClassName, List<ObjectId> ObjectIds,
-    bool HasFormat, string? FormatError);
 
-/// <summary>保存模型空间扫描结果及原项目身份验证回调。</summary>
-internal sealed record PlantTagScan(IReadOnlyList<PlantTagClassGroup> Groups,
-    IReadOnlyList<string> Warnings, Func<bool> IsCurrent);
 
 /// <summary>在 CAD 主线程以只读方式检查当前项目的对象位号。</summary>
 internal static class PlantTagCheckAccess
@@ -35,52 +29,79 @@ internal static class PlantTagCheckAccess
         { throw new InvalidOperationException($"SDK DataLinks ErrorCode={ex.ErrorCode}：{ex.Message}", ex); }
     }
 
-    /// <summary>提供单个命令和批量命令共用的检查；不调用赋号、属性写回或保存接口。</summary>
+    /// <summary>单对象选择仍按需定位；批量扫描不通过此入口发现类别。</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static TagCheckResult Check(ObjectId objectId)
     {
-        var subject = new TagCheckSubject("", "", "", "", "");
         try
         {
             if (objectId.IsNull || !objectId.IsValid || objectId.IsErased)
                 throw new InvalidOperationException("目标对象已失效或被删除。");
-            subject = subject with { Handle = objectId.Handle.ToString() };
-            var target = Sdk(() => PlantTagFormatAccess.Locate(objectId));
-            if (target == null)
-                throw new InvalidOperationException("所选对象不是当前 Plant 项目中可识别的 Plant 3D 部件。");
-            subject = subject with { ProjectPart = target.PartName, ClassName = target.ClassName };
-            var format = Sdk(() => PlantTagFormatAccess.ReadFormat(target));
-            subject = subject with { Format = format?.Expression ?? "" };
-            if (format == null) return new(subject, "", TagCheckStatus.NoFormat, []);
-
-            string ReadTag(string name)
-            {
-                if (!target.Links.HasProperty(target.RowId, name)) return "";
-                var names = new StringCollection { name };
-                var values = target.Links.GetProperties(objectId, names, true);
-                return values.Count == 0 ? "" : values[0] ?? "";
-            }
-            string tag = Sdk(() => TagCheckPolicy.ReadExistingTag(target.PartName, ReadTag));
-            subject = subject with { ExistingTag = tag };
-            var tools = new FormatToolsUtil();
-            return TagCheckPolicy.Check(subject,
-                () => Sdk(() => tools.RebuildTagValue(subject.Format, tag, objectId)),
-                () => Sdk(() => ReadFields(tools, objectId, subject.Format, tag)));
+            var context = Sdk(() => PlantTagFormatAccess.Locate(objectId))
+                ?? throw new InvalidOperationException("所选对象不是当前 Plant 项目中可识别的 Plant 3D 部件。");
+            var table = context.Links.GetPnPDatabase().Tables[context.ClassName];
+            var kind = table.IsKindOf("PipeLines") ? TagTargetKind.LineSegment : TagTargetKind.Component;
+            return Check(new PlantTagTarget(context, kind, [objectId], [objectId.Database.Filename], "", []));
         }
         catch (OperationCanceledException) { throw; }
         catch (System.Exception ex)
-        { return new(subject, "", TagCheckStatus.Error, [], ex.Message); }
+        { return new(new("", "", "", "", ""), "", TagCheckStatus.Error, [], ex.Message); }
+    }
+
+    /// <summary>统一检查图形或数据行目标；组读取自身格式，不借用成员 SLINE 格式。</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static TagCheckResult Check(PlantTagTarget target, bool refreshFormat = false)
+    {
+        var subject = target.Subject;
+        try
+        {
+            if (target.LinkError != null) throw new InvalidOperationException(target.LinkError);
+            var context = target.Context;
+            var row = Sdk(() => context.Links.GetPnPDatabase().GetRow(context.RowId))
+                ?? throw new InvalidOperationException("目标数据行已失效。");
+            if (row.ClassName != context.ClassName) throw new InvalidOperationException("目标实际类别已变化，请重新扫描。");
+            if (!refreshFormat && target.FormatError != null) throw new InvalidOperationException(target.FormatError);
+            var format = !refreshFormat && target.FormatKnown ? target.CachedFormat
+                : Sdk(() => PlantTagFormatAccess.ReadFormat(context));
+            subject = subject with { Format = format?.Expression ?? "" };
+            if (format == null) return new(subject, "", TagCheckStatus.NoFormat, []);
+            ObjectId id = target.ObjectIds.FirstOrDefault(x => x.IsValid && !x.IsErased);
+            if (target.Kind != TagTargetKind.LineGroup && target.ObjectIds.Length != 0 && id.IsNull)
+                throw new InvalidOperationException("目标图形已失效或删除。");
+            string ReadTag(string name)
+            {
+                if (!context.Links.HasProperty(context.RowId, name)) return "";
+                var names = new StringCollection { name };
+                var values = id.IsNull ? context.Links.GetProperties(context.RowId, names, true)
+                    : context.Links.GetProperties(id, names, true);
+                return values.Count == 0 ? "" : values[0] ?? "";
+            }
+            string tag = Sdk(() => TagCheckPolicy.ReadExistingTag(context.PartName, ReadTag));
+            subject = subject with { ExistingTag = tag };
+            var tools = new FormatToolsUtil();
+            return TagCheckPolicy.Check(subject,
+                () => Sdk(() => id.IsNull ? tools.RebuildTagValue(subject.Format, tag, context.RowId, context.Links)
+                    : tools.RebuildTagValue(subject.Format, tag, id)),
+                () => Sdk(() => ReadFields(tools, id, context, subject.Format, tag)));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (System.Exception ex) { return new(subject, "", TagCheckStatus.Error, [], ex.Message); }
     }
 
     /// <summary>按 SDK 拆出的旧值读取当前属性；只对非自动编号属性片段求值以保留格式规则。</summary>
     /// <remarks>任何整式 Evaluate、自动编号及 AssignProperty 调用均不属于检查流程。</remarks>
     private static IReadOnlyList<TagCheckField> ReadFields(FormatToolsUtil tools, ObjectId objectId,
-        string format, string tag)
+        PlantTagContext context, string format, string tag)
     {
         if (!FormatStringUtils.IsValid(format))
             throw new InvalidOperationException("位号格式无效：" + format);
         var tokens = Regex.Matches(format, @"#\([^()]*\)");
-        var values = tools.TokenizeValueAgainstFormatString(format, tag, objectId, true)
+        string? Evaluate(string token) => objectId.IsNull
+            ? FormatStringUtils.Evaluate(token, context.RowId, context.Links)
+            : FormatStringUtils.Evaluate(token, objectId);
+        var values = (objectId.IsNull
+            ? tools.TokenizeValueAgainstFormatString(format, tag, true, context.RowId, context.Links)
+            : tools.TokenizeValueAgainstFormatString(format, tag, objectId, true))
             ?? throw new InvalidOperationException("SDK 无法拆分现有 Tag。");
         if (values.Length != tokens.Count)
             values = values.Where(f => f.meSource != FormatSource.None || f.mbFormat || f.mbAutogen).ToArray();
@@ -120,13 +141,14 @@ internal static class PlantTagCheckAccess
                     {
                         if (definition.mbUseMate)
                         {
-                            string mate = FormatStringUtils.Evaluate(token, objectId)
+                            string mate = Evaluate(token)
                                 ?? throw new InvalidOperationException("SDK 未返回配对字段值。");
                             return (Raw: mate, Expected: mate);
                         }
-                        string raw = tools.RetrieveProperty(propertyPath, objectId) ?? "";
+                        string raw = (objectId.IsNull ? tools.RetrieveProperty(propertyPath, context.RowId, context.Links)
+                            : tools.RetrieveProperty(propertyPath, objectId)) ?? "";
                         // 此片段已确认非自动编号；只计算该属性的格式规则，不生成新编号。
-                        string expected = FormatStringUtils.Evaluate(token, objectId)
+                        string expected = Evaluate(token)
                             ?? throw new InvalidOperationException("SDK 未返回字段值。");
                         return (Raw: raw, Expected: expected);
                     }
@@ -142,50 +164,8 @@ internal static class PlantTagCheckAccess
         return result;
     }
 
-    /// <summary>只扫描当前数据库模型空间直接对象，缓存类别格式，识别失败单独保留诊断。</summary>
+    /// <summary>复用一次数据行扫描，实际类别来自 PnPRow.ClassName。</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    internal static PlantTagScan Scan(Database database, Action checkBreak)
-    {
-        var project = PlantApplication.CurrentProject
-            ?? throw new InvalidOperationException("没有当前 Plant 项目，请打开项目后重试。");
-        var groups = new Dictionary<string, PlantTagClassGroup>(StringComparer.Ordinal);
-        var warnings = new List<string>();
-        ObjectId[] ids;
-        using (var transaction = database.TransactionManager.StartOpenCloseTransaction())
-        {
-            var table = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
-            var space = (BlockTableRecord)transaction.GetObject(table[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-            ids = space.Cast<ObjectId>().ToArray();
-        }
-        foreach (ObjectId id in ids)
-        {
-            checkBreak();
-            if (!ReferenceEquals(project, PlantApplication.CurrentProject))
-                throw new InvalidOperationException("当前 Plant 项目已变化，扫描已停止。");
-            if (!id.IsValid || id.IsErased) continue;
-            try
-            {
-                var target = Sdk(() => PlantTagFormatAccess.Locate(id));
-                if (target == null) continue;
-                string key = target.PartName + "\n" + target.ClassName;
-                if (!groups.TryGetValue(key, out var group))
-                {
-                    bool hasFormat = false;
-                    string? error = null;
-                    try { hasFormat = Sdk(() => PlantTagFormatAccess.ReadFormat(target)) != null; }
-                    catch (OperationCanceledException) { throw; }
-                    catch (System.Exception ex) { error = ex.Message; }
-                    group = new(target.PartName, target.ClassName, [], hasFormat, error);
-                    groups.Add(key, group);
-                }
-                group.ObjectIds.Add(id);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (System.Exception ex)
-            { warnings.Add($"句柄 {id.Handle}：识别失败：{ex.Message}"); }
-        }
-        return new(groups.Values.OrderBy(g => g.ClassName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(g => g.PartName, StringComparer.Ordinal).ToArray(), warnings,
-            () => ReferenceEquals(project, PlantApplication.CurrentProject));
-    }
+    internal static PlantTagScan Scan(Database database, Action checkBreak) =>
+        Sdk(() => PlantTagCatalogAccess.Read(database, checkBreak));
 }

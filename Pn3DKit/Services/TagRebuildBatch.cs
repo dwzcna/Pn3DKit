@@ -11,7 +11,8 @@ public static class TagRebuildBatch
         ITagRebuildJournal journal, Action<int, int> progress)
     {
         var records = plans.Where(x => x.State != TagRebuildState.Ready).Select(TagRebuildPolicy.Preview).ToList();
-        var pending = plans.Where(x => x.State == TagRebuildState.Ready).Select(x => x.Item).ToArray();
+        var pending = plans.Where(x => x.State == TagRebuildState.Ready).Select(x => x.Item)
+            .OrderBy(x => x.Check.Subject.Kind == TagTargetKind.LineGroup ? 0 : 1).ToArray();
         bool undo = false, attempted = false, safe = true, logFailed = false;
         string? stop = null;
         void Record(TagRebuildRecord record)

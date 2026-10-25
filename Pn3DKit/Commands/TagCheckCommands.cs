@@ -71,8 +71,8 @@ public sealed class TagCheckCommands
             var skipped = scan.Groups.Where(g => !g.HasFormat && g.FormatError == null).ToArray();
             string skippedText = skipped.Length == 0 ? ""
                 : "未配置位号格式的类别已跳过："
-                    + string.Join("、", skipped.Select(g => g.ClassName).Distinct())
-                    + $"（共 {skipped.Select(g => g.ClassName).Distinct().Count()} 类，{skipped.Sum(g => g.ObjectIds.Count)} 个对象）";
+                    + string.Join("、", skipped.Select(g => g.DisplayName + " " + g.Targets.Count + g.Unit))
+                    + $"（共 {skipped.Select(g => g.ClassName).Distinct().Count()} 类，{skipped.Sum(g => g.Targets.Count)} 个目标）";
             if (skippedText.Length != 0) WriteSafely("\n" + skippedText);
             foreach (string warning in scan.Warnings.Take(20))
                 WriteSafely("\n" + warning);
@@ -80,6 +80,7 @@ public sealed class TagCheckCommands
                 WriteSafely($"\n另有 {scan.Warnings.Count - 20} 条识别警告，执行检查时将写入日志。");
             if (available.Length == 0)
             {
+                foreach (string diagnostic in scan.Diagnostics) WriteSafely("\n扫描诊断：" + diagnostic);
                 WriteSafely("\n当前图纸模型空间没有可检查的位号类别。");
                 return;
             }
@@ -88,7 +89,7 @@ public sealed class TagCheckCommands
                 var group = available[i];
                 string part = available.Count(g => g.ClassName == group.ClassName) > 1
                     ? " [" + group.PartName + "]" : "";
-                WriteSafely($"\n{i + 1} - {group.ClassName}{part} ({group.ObjectIds.Count})"
+                WriteSafely($"\n{i + 1} - {group.DisplayName}{part} ({group.Targets.Count}{group.Unit})"
                     + (group.FormatError == null ? "" : "（格式读取失败，检查结果将记录原因）"));
             }
 
@@ -115,8 +116,7 @@ public sealed class TagCheckCommands
                 return;
             }
             var selected = numbers.Select(number => available[number - 1]).ToArray();
-            var objects = selected.SelectMany(g => g.ObjectIds.Select(id =>
-                (Id: id, PartName: g.PartName, ClassName: g.ClassName))).DistinctBy(item => item.Id).ToArray();
+            var objects = selected.SelectMany(g => g.Targets).DistinctBy(item => item.Key).ToArray();
             string[] classes = selected.Select(g => g.ClassName).Distinct().ToArray();
             string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             if (string.IsNullOrWhiteSpace(documents))
@@ -145,8 +145,8 @@ public sealed class TagCheckCommands
             {
                 var result = TagCheckBatch.Run(objects, item =>
                 {
-                    var checkedItem = PlantTagCheckAccess.Check(item.Id);
-                    return TagCheckPolicy.BindToScannedClass(checkedItem, item.PartName, item.ClassName);
+                    var checkedItem = PlantTagCheckAccess.Check(item);
+                    return TagCheckPolicy.BindToScannedClass(checkedItem, item.Context.PartName, item.Context.ClassName);
                 }, EnsureContext, journal,
                     (done, total) => WriteSafely($"\n位号检查进度：{done}/{total}"));
                 foreach (string className in classes)

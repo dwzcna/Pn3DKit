@@ -58,9 +58,7 @@ public sealed class TagRebuildCommands
                     groups.Select(g => g.ClassName).Distinct());
                 Write("日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
                 foreach (string warning in scan.Warnings) journal.Message("扫描警告：" + warning);
-                var selected = groups.SelectMany(g => g.ObjectIds.Select(id =>
-                    (Id: id, Part: g.PartName, Class: g.ClassName, Handle: id.Handle.ToString())))
-                    .DistinctBy(x => x.Id).ToArray();
+                var selected = groups.SelectMany(g => g.Targets).DistinctBy(x => x.Key).ToArray();
                 var candidates = new List<TagRebuildCandidate>();
                 IReadOnlyList<TagRebuildPlan>? plans = null;
                 try
@@ -69,7 +67,7 @@ public sealed class TagRebuildCommands
                     foreach (var target in selected)
                     {
                         access.EnsureContext();
-                        var item = access.ReadCandidate(target.Id);
+                        var item = access.ReadCandidate(target);
                         if (candidates.Any(x => x.Key == item.Key)) continue;
                         candidates.Add(item);
                         string? unavailable = TagRebuildPolicy.UnavailableReason(item);
@@ -99,7 +97,7 @@ public sealed class TagRebuildCommands
                     var ready = plans.Where(x => x.State == TagRebuildState.Ready).ToArray();
                     foreach (var plan in ready.Take(20))
                         Write(plan.Item.Check.Subject.ExistingTag + " → " + plan.Item.Check.ExpectedTag
-                            + "（句柄 " + plan.Item.Check.Subject.Handle + "）");
+                            + "（" + plan.Item.Check.Subject.Identity + "）");
                     if (ready.Length > 20) Write("其余预览请查看 CSV。");
                     access.EnsureContext();
                     if (ready.Length == 0)
@@ -109,7 +107,15 @@ public sealed class TagRebuildCommands
                         Write(status);
                         return false;
                     }
-                    Write("预检已写入 CSV，可先以只读方式打开核对；同句柄最后一行为最终动作。");
+                    foreach (var groupTarget in ready.Where(x => x.Item.Check.Subject.Kind == TagTargetKind.LineGroup))
+                    {
+                        string range = "管线组写入范围"
+                            + (groupTarget.Item.Check.Subject.Drawings.Count > 1 ? "（跨图纸共享组）：" : "：")
+                            + groupTarget.Item.Check.Subject.Identity
+                            + "；只写组自身 Tag，不扩展为重建未选择的成员";
+                        Write(range); journal.Message(range);
+                    }
+                    Write("预检已写入 CSV，可先以只读方式打开核对；同项目部分及数据行ID的最后一行为最终动作。");
                     Write("本次计划用一个 UNDO 组组织写入；Plant 数据缓存是否随 UNDO 回退尚待实机确认，必要时请用日志恢复。默认不写入、不保存。");
                     if (!Confirm(document.Editor, $"重建 {ready.Length} 个位号？", access.EnsureStable))
                     {
@@ -156,11 +162,11 @@ public sealed class TagRebuildCommands
                             : plans.Select(plan => plan.State == TagRebuildState.Ready
                                 ? new TagRebuildRecord(plan.Item, TagRebuildAction.Unexecuted, status)
                                 : TagRebuildPolicy.Preview(plan)).ToList();
-                        var handles = candidates.SelectMany(x => x.Check.Subject.Handle.Split('、')).ToHashSet();
-                        foreach (var target in selected.Where(x => !handles.Contains(x.Handle)))
+                        var completedKeys = candidates.Select(x => x.Key).ToHashSet();
+                        foreach (var target in selected.Where(x => !completedKeys.Contains(x.Key)))
                         {
-                            var item = new TagRebuildCandidate("未预检:" + target.Handle,
-                                new(new(target.Part, target.Class, target.Handle, "", ""), "", TagCheckStatus.Error, [], status));
+                            var item = new TagRebuildCandidate(target.Key,
+                                new(target.Subject, "", TagCheckStatus.Error, [], status));
                             results.Add(new(item, TagRebuildAction.Unexecuted, "预检未完成：" + status));
                         }
                         final = results;
@@ -208,13 +214,18 @@ public sealed class TagRebuildCommands
     {
         var skipped = scan.Groups.Where(g => !g.HasFormat && g.FormatError == null).ToArray();
         if (skipped.Length != 0)
-            Write("未配置位号格式的类别已跳过：" + string.Join("、", skipped.Select(x => x.ClassName).Distinct())
-                + $"（共 {skipped.Select(x => x.ClassName).Distinct().Count()} 类，{skipped.Sum(x => x.ObjectIds.Count)} 个对象）");
+            Write("未配置位号格式的类别已跳过：" + string.Join("、", skipped.Select(x => x.DisplayName + " " + x.Targets.Count + x.Unit))
+                + $"（共 {skipped.Select(x => x.ClassName).Distinct().Count()} 类，{skipped.Sum(x => x.Targets.Count)} 个目标）");
         foreach (string warning in scan.Warnings.Take(20)) Write(warning);
         var groups = scan.Groups.Where(g => g.HasFormat || g.FormatError != null).ToArray();
-        if (groups.Length == 0) { Write("当前模型空间没有可预检的位号类别。"); return null; }
+        if (groups.Length == 0)
+        {
+            foreach (string diagnostic in scan.Diagnostics) Write("扫描诊断：" + diagnostic);
+            Write("当前模型空间没有可预检的位号类别。");
+            return null;
+        }
         for (int i = 0; i < groups.Length; i++)
-            Write($"{i + 1} - {groups[i].ClassName} [{groups[i].PartName}] ({groups[i].ObjectIds.Count})");
+            Write($"{i + 1} - {groups[i].DisplayName} [{groups[i].PartName}] ({groups[i].Targets.Count}{groups[i].Unit})");
         while (true)
         {
             ensure();

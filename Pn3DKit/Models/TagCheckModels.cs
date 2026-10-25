@@ -3,9 +3,26 @@ namespace Pn3DKit.Models;
 /// <summary>位号检查的六种逐对象状态；取消属于批次状态。</summary>
 public enum TagCheckStatus { Consistent, Mismatch, NoFormat, NoTag, TemporaryTag, Error }
 
-/// <summary>保存不依赖 CAD 的检查输入，所有字符串均保留原始大小写。</summary>
+/// <summary>区分普通元件、SLINE 和无独立图形的管线组。</summary>
+public enum TagTargetKind { Component, LineSegment, LineGroup }
+
+/// <summary>保存不依赖 CAD 的检查输入及真实项目数据身份。</summary>
 public sealed record TagCheckSubject(string ProjectPart, string ClassName, string Handle,
-    string Format, string ExistingTag);
+    string Format, string ExistingTag)
+{
+    /// <summary>真实项目行 ID；旧的离线输入可保持为空。</summary>
+    public string RowId { get; init; } = "";
+    /// <summary>真实类别继承确定的目标种类。</summary>
+    public TagTargetKind Kind { get; init; }
+    /// <summary>关联图纸的完整路径，不使用路径充当数据库身份。</summary>
+    public IReadOnlyList<string> Drawings { get; init; } = [];
+    /// <summary>组目标的关联成员句柄说明，不伪造组自身句柄。</summary>
+    public string RelatedHandles { get; init; } = "";
+    /// <summary>日志中可辨认的行、图形及共享范围。</summary>
+    public string Identity => $"数据行 {RowId}；句柄 {Handle}"
+        + (RelatedHandles.Length == 0 ? "" : "；成员 " + RelatedHandles)
+        + (Drawings.Count == 0 ? "" : "；图纸 " + string.Join("、", Drawings));
+}
 
 /// <summary>保存一个格式字段的现有片段、当前原始属性和格式化后的期望片段。</summary>
 /// <param name="Token">包含 #() 的完整格式片段。</param>

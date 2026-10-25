@@ -39,7 +39,7 @@ public sealed class TagCheckJournal : IDisposable
             _log.WriteLine("所选类别：" + string.Join("、", _classes));
             _log.WriteLine("开始时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
             if (skipped.Length != 0) _log.WriteLine(skipped);
-            _csv.WriteLine("类别,句柄,现有Tag,期望Tag,状态,差异字段");
+            _csv.WriteLine("项目部分,类别,数据行ID,句柄,现有Tag,期望Tag,状态,差异字段");
             Flush();
         }
         catch { Dispose(); throw; }
@@ -53,11 +53,11 @@ public sealed class TagCheckJournal : IDisposable
     public void Append(TagCheckResult item)
     {
         var s = item.Subject;
-        _log.WriteLine($"[{s.ProjectPart} / {s.ClassName} / 句柄 {s.Handle}] {item.StatusText} | {item.Message}");
+        _log.WriteLine($"[{s.ProjectPart} / {s.ClassName} / {s.Identity}] {item.StatusText} | {item.Message}");
         _log.WriteLine("现有Tag：" + s.ExistingTag + "；期望Tag：" + item.ExpectedTag);
         if (s.Format.Length != 0) _log.WriteLine("格式：" + s.Format);
         if (item.Details.Length != 0) _log.WriteLine(item.Details);
-        _csv.WriteLine(string.Join(",", new[] { s.ClassName, s.Handle, s.ExistingTag,
+        _csv.WriteLine(string.Join(",", new[] { s.ProjectPart, s.ClassName, s.RowId, s.Handle, s.ExistingTag,
             item.ExpectedTag, item.StatusText, item.Details }.Select(EscapeCsv)));
         Flush();
     }
