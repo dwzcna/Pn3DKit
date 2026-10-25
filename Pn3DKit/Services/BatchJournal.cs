@@ -8,23 +8,24 @@ namespace Pn3DKit.Services;
 /// <remarks>仅由宿主主线程使用；日志失败向调用方传播，使批次停止。</remarks>
 public sealed class BatchJournal : IDisposable
 {
+    private readonly RunLogFiles _files;
     private readonly StreamWriter _log;
     private readonly StreamWriter _items;
     /// <summary>返回批次最终报告的完整路径。</summary>
     public string ReportPath { get; }
 
     /// <summary>创建独立日志目录，禁止覆盖已存在的日志。</summary>
-    public BatchJournal(string directory)
+    public BatchJournal(string directory, RunLogFiles? files = null)
     {
+        _files = files ?? new RunLogFiles();
+        _files.EnsureDirectory(directory);
         string logDirectory = Path.Combine(directory, ".pn3dkit-logs");
-        Directory.CreateDirectory(logDirectory);
+        _files.EnsureDirectory(logDirectory);
         ReportPath = Path.Combine(logDirectory, "report.json");
-        _log = new(new FileStream(Path.Combine(directory, "Export.log"), FileMode.CreateNew,
-            FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
+        _log = new(_files.CreateNew(Path.Combine(directory, "Export.log")), new UTF8Encoding(false)) { AutoFlush = true };
         try
         {
-            _items = new(new FileStream(Path.Combine(logDirectory, "results.jsonl"), FileMode.CreateNew,
-                FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
+            _items = new(_files.CreateNew(Path.Combine(logDirectory, "results.jsonl")), new UTF8Encoding(false)) { AutoFlush = true };
         }
         catch { _log.Dispose(); throw; }
     }
@@ -39,9 +40,9 @@ public sealed class BatchJournal : IDisposable
     public void Complete(IReadOnlyList<DrawingResult> items)
     {
         string temporary = ReportPath + ".tmp";
-        using (var stream = new FileStream(temporary, FileMode.CreateNew))
+        using (var stream = _files.CreateNew(temporary))
             JsonSerializer.Serialize(stream, items, new JsonSerializerOptions { WriteIndented = true });
-        File.Move(temporary, ReportPath, false);
+        _files.Publish(temporary, ReportPath);
     }
 
     /// <summary>释放两个日志流；任意流关闭失败仍释放另一个流。</summary>

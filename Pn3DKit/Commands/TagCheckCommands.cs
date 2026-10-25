@@ -44,11 +44,15 @@ public sealed class TagCheckCommands
     public void CheckPnTagByClass()
     {
         string? output = null;
+        var files = new RunLogFiles();
+        IDisposable? lease = null;
+        bool issues = true;
+        Action ensureRetention = () => { };
         try
         {
             var document = Ready("CHECKPNTAGBYCLASS");
             if (document == null) return;
-            using var lease = BatchRunGate.TryEnter();
+            lease = BatchRunGate.TryEnter();
             if (lease == null) { WriteSafely("\n已有 Pn3DKit 批次正在运行。"); return; }
             Database database;
             ObjectId databaseIdentity;
@@ -60,6 +64,7 @@ public sealed class TagCheckCommands
             catch (System.Exception ex)
             { throw new InvalidOperationException("无法读取数据库状态：" + ex.Message, ex); }
             EnsureDocument(database, databaseIdentity);
+            ensureRetention = () => EnsureDocument(database, databaseIdentity);
             var editor = document.Editor;
             var scan = PlantTagCheckAccess.Scan(database, () =>
             {
@@ -118,9 +123,7 @@ public sealed class TagCheckCommands
             var selected = numbers.Select(number => available[number - 1]).ToArray();
             var objects = selected.SelectMany(g => g.Targets).DistinctBy(item => item.Key).ToArray();
             string[] classes = selected.Select(g => g.ClassName).Distinct().ToArray();
-            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            if (string.IsNullOrWhiteSpace(documents))
-                documents = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents");
+            string documents = RunPaths.Documents();
             string suggested = TagCheckPaths.Suggest(documents, DateTime.Now);
             output = SelectDirectory(editor, suggested, () => EnsureDocument(database, databaseIdentity));
             if (output == null) return;
@@ -139,7 +142,7 @@ public sealed class TagCheckCommands
                     .Select(g => g.ClassName + "：扫描时格式读取失败：" + g.FormatError))
                 .Where(s => s.Length != 0));
             string drawing = string.IsNullOrWhiteSpace(database.Filename) ? document.Name : database.Filename;
-            using var journal = new TagCheckJournal(output, drawing, classes, diagnostics);
+            using var journal = new TagCheckJournal(output, drawing, classes, diagnostics, files);
             WriteSafely("\n日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
             try
             {
@@ -149,6 +152,8 @@ public sealed class TagCheckCommands
                     return TagCheckPolicy.BindToScannedClass(checkedItem, item.Context.PartName, item.Context.ClassName);
                 }, EnsureContext, journal,
                     (done, total) => WriteSafely($"\n位号检查进度：{done}/{total}"));
+                issues = scan.Warnings.Count != 0 || result.StopReason != null
+                    || LogRetentionPolicy.CheckHasIssues(result.Items, result.Total, result.Interrupted);
                 foreach (string className in classes)
                     WriteSafely("\n" + className + "：" + TagCheckPolicy.Summary(
                         result.Items.Where(x => x.Subject.ClassName == className)));
@@ -167,6 +172,12 @@ public sealed class TagCheckCommands
         {
             ReportFailure(ex);
             if (output != null) WriteSafely("\n日志目录：" + output);
+            issues = true;
+        }
+        finally
+        {
+            try { LogRetentionPrompt.Finish(files, issues, ensureRetention); }
+            finally { lease?.Dispose(); }
         }
     }
 

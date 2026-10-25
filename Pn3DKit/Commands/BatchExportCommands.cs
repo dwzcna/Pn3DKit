@@ -28,6 +28,8 @@ public sealed class BatchExportCommands
             Write("已有 Pn3DKit 批次正在运行。");
             return;
         }
+        var files = new RunLogFiles();
+        bool issues = true;
         try
         {
             if (AcadApp.DocumentManager.MdiActiveDocument == null)
@@ -36,7 +38,7 @@ public sealed class BatchExportCommands
                 return;
             }
             var project = PlantProjectAccess.Read();
-            var host = new AutoCadHost(project.IsCurrent);
+            var host = new AutoCadHost(project.IsCurrent, files);
             var original = host.OriginalDrawing!;
             BatchOptions? options = await host.InDocumentAsync(original, document =>
             {
@@ -69,7 +71,7 @@ public sealed class BatchExportCommands
                     || saveResult.StringResult.Equals("Yes", StringComparison.OrdinalIgnoreCase)
                     || saveResult.StringResult.Equals("Y", StringComparison.OrdinalIgnoreCase);
                 string suggested = ExportPolicy.SuggestDirectory(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), DateTime.Now);
+                    RunPaths.Documents(), DateTime.Now);
                 int fileDia = Convert.ToInt32(AcadApp.GetSystemVariable("FILEDIA"));
                 string? output = OutputDirectorySelection.Select(fileDia, suggested,
                     path => FolderSelectDialogue.Select(path, AcadApp.MainWindow.Handle),
@@ -122,7 +124,8 @@ public sealed class BatchExportCommands
                 }
             });
             if (options == null) { Write("批次未开始。"); return; }
-            var result = await new BatchExporter().RunAsync(project.Catalog, options, host, Write);
+            var result = await new BatchExporter().RunAsync(project.Catalog, options, host, Write, files: files);
+            issues = LogRetentionPolicy.ExportHasIssues(result);
             Write("报告：" + result.ReportPath);
             if (result.StopReason != null) Write("停止原因：" + result.StopReason);
         }
@@ -132,7 +135,8 @@ public sealed class BatchExportCommands
                 + (ex is FileNotFoundException or FileLoadException or TypeLoadException
                     ? "；请在已加载 Plant 环境的 AutoCAD Plant 3D 2026 中运行此命令。" : ""));
         }
-        // 租约在等待、异常处理和 CAD 回调清理全部结束后才释放。
+        finally { await LogRetentionPrompt.FinishAsync(files, issues); }
+        // 租约覆盖最后的保留询问和文件清理。
     }
 
     /// <summary>向当前活动文档写入中文消息；文档失效时仅记录调试信息。</summary>

@@ -6,15 +6,8 @@ namespace Pn3DKit.Utils;
 public static class TagRebuildPaths
 {
     /// <summary>生成文档目录下的独立时间戳建议，已有目录时递增后缀。</summary>
-    public static string Suggest(string documentsDirectory, DateTime localTime)
-    {
-        string original = Path.Combine(ExportPolicy.Normalize(documentsDirectory), "Pn3DKit.TagRebuild",
-            localTime.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture));
-        string path = original;
-        for (int index = 1; Directory.Exists(path) || File.Exists(path); index++)
-            path = original + "_" + index.ToString("D2", CultureInfo.InvariantCulture);
-        return path;
-    }
+    public static string Suggest(string documentsDirectory, DateTime localTime) =>
+        RunPaths.Suggest(documentsDirectory, RunLogKind.TagRebuild, localTime);
 
     /// <summary>拒绝路径链接、文件路径及任何同名日志，实际打开仍使用 CreateNew。</summary>
     public static string Validate(string path)

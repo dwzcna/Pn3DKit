@@ -193,7 +193,7 @@ public sealed class TagCheckTests
     {
         using var fixture = new LogFixture();
         var now = new DateTime(2026, 10, 25, 14, 3, 7);
-        string first = Path.Combine(fixture.Root, "Pn3DKit.TagCheck", "261025140307");
+        string first = Path.Combine(fixture.Root, "Pn3DKit", "TagCheck", "261025140307");
         Assert.Equal(first, TagCheckPaths.Suggest(fixture.Root, now));
         Assert.False(Directory.Exists(first));
         Directory.CreateDirectory(first);

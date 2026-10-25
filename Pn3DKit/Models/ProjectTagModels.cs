@@ -5,7 +5,11 @@ public enum ProjectTagMode { Data, Drawings, Cancel }
 /// <summary>固定一张关联图纸及其中涉及的已确认数据行。</summary>
 public sealed record ProjectTagDrawingJob(string Path, IReadOnlyList<string> Keys);
 /// <summary>分别记录图纸同步和数据行更新，避免把共享数据已更新误报为每张图均保存。</summary>
-public sealed record ProjectTagDrawingResult(string Path, string Status, string Reason, bool Retained);
+public sealed record ProjectTagDrawingResult(string Path, string Status, string Reason, bool Retained)
+{
+    /// <summary>图纸同步、保存或关闭异常的结构化标记，日志策略不解析中文状态。</summary>
+    public bool HasIssue { get; init; }
+}
 /// <summary>项目批次的最终行结果、逐图结果及停止原因。</summary>
 public sealed record ProjectTagBatchResult(IReadOnlyList<TagRebuildRecord> Records,
     IReadOnlyList<ProjectTagDrawingResult> Drawings, string? StopReason);

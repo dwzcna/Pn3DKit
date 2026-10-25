@@ -6,15 +6,8 @@ namespace Pn3DKit.Utils;
 public static class TagCheckPaths
 {
     /// <summary>使用系统文档目录和本地时间生成建议目录；此方法不创建目录。</summary>
-    public static string Suggest(string documentsDirectory, DateTime localTime)
-    {
-        string original = Path.Combine(ExportPolicy.Normalize(documentsDirectory), "Pn3DKit.TagCheck",
-            localTime.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture));
-        string candidate = original;
-        for (int index = 1; Directory.Exists(candidate) || File.Exists(candidate); index++)
-            candidate = original + "_" + index.ToString("D2", CultureInfo.InvariantCulture);
-        return candidate;
-    }
+    public static string Suggest(string documentsDirectory, DateTime localTime) =>
+        RunPaths.Suggest(documentsDirectory, RunLogKind.TagCheck, localTime);
 
     /// <summary>检查完整目录及两件日志的冲突；实际写入仍使用 CreateNew 防止竞态覆盖。</summary>
     public static string Validate(string path)

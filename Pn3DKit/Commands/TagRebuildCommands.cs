@@ -24,6 +24,9 @@ public sealed class TagRebuildCommands
         TagRebuildJournal? journal = null;
         IReadOnlyList<TagRebuildRecord> final = [];
         string status = "未执行";
+        var files = new RunLogFiles();
+        bool issues = false;
+        int total = 0;
         try
         {
             var originalDocument = AcadApp.DocumentManager.MdiActiveDocument;
@@ -31,7 +34,7 @@ public sealed class TagRebuildCommands
             var database = originalDocument.Database;
             var identity = database.BlockTableId;
             Func<bool> isCurrent = () => true;
-            var host = new AutoCadHost(() => isCurrent());
+            var host = new AutoCadHost(() => isCurrent(), files);
             var original = host.OriginalDrawing!;
             bool save = await host.InDocumentAsync(original, document =>
             {
@@ -45,9 +48,7 @@ public sealed class TagRebuildCommands
                 access.EnsureContext();
                 var groups = SelectGroups(document.Editor, scan, access.EnsureContext);
                 if (groups == null || groups.Length == 0) return false;
-                string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                if (string.IsNullOrWhiteSpace(documents))
-                    documents = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents");
+                string documents = RunPaths.Documents();
                 string? directory = TagCheckCommands.SelectDirectory(document.Editor,
                     TagRebuildPaths.Suggest(documents, DateTime.Now), access.EnsureContext,
                     TagRebuildPaths.Validate, "位号重建");
@@ -55,10 +56,12 @@ public sealed class TagRebuildCommands
                 access.EnsureContext();
                 journal = new TagRebuildJournal(directory,
                     string.IsNullOrWhiteSpace(database.Filename) ? document.Name : database.Filename,
-                    groups.Select(g => g.ClassName).Distinct());
+                    groups.Select(g => g.ClassName).Distinct(), files);
                 Write("日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
+                issues |= scan.Warnings.Count != 0;
                 foreach (string warning in scan.Warnings) journal.Message("扫描警告：" + warning);
                 var selected = groups.SelectMany(g => g.Targets).DistinctBy(x => x.Key).ToArray();
+                total = selected.Length;
                 var candidates = new List<TagRebuildCandidate>();
                 IReadOnlyList<TagRebuildPlan>? plans = null;
                 try
@@ -135,6 +138,7 @@ public sealed class TagRebuildCommands
                     var result = TagRebuildBatch.Run(plans, access, journal,
                         (done, total) => Write($"位号重建进度：{done}/{total}"));
                     final = result.Records;
+                    issues |= result.StopReason != null;
                     status = result.StopReason ?? "重建完成";
                     Write(status);
                     foreach (var group in final.GroupBy(x => x.Item.Check.Subject.ClassName))
@@ -148,6 +152,7 @@ public sealed class TagRebuildCommands
                 }
                 catch (System.Exception ex)
                 {
+                    issues = true;
                     status = (ex is OperationCanceledException ? "已中断：" : "已停止：") + ex.Message;
                     if (final.Count == 0)
                     {
@@ -180,7 +185,7 @@ public sealed class TagRebuildCommands
             if (save)
             {
                 string internalDirectory = Path.Combine(Path.GetDirectoryName(journal!.LogPath)!, "_internal");
-                Directory.CreateDirectory(internalDirectory);
+                files.EnsureDirectory(internalDirectory);
                 await TagRebuildSave.RunAsync(true, true,
                     () => host.SaveAsync(original, Path.Combine(internalDirectory, "save-" + Guid.NewGuid().ToString("N") + ".done")),
                     async () => (await host.ReadStateAsync(original)).Modified, journal);
@@ -189,6 +194,7 @@ public sealed class TagRebuildCommands
         }
         catch (System.Exception ex)
         {
+            issues = true;
             status = "重建未完成：" + ex.Message;
             Write(status + (ex is FileNotFoundException or FileLoadException or TypeLoadException
                 ? "；请在 AutoCAD Plant 3D 2026 中打开项目后运行。" : ""));
@@ -200,12 +206,14 @@ public sealed class TagRebuildCommands
             if (journal != null)
             {
                 try { journal.Complete(final, status); }
-                catch (System.Exception ex) { Write("日志收尾失败：" + ex.Message); }
+                catch (System.Exception ex) { issues = true; Write("日志收尾失败：" + ex.Message); }
                 try { journal.Dispose(); }
-                catch (System.Exception ex) { Write("日志关闭失败：" + ex.Message); }
+                catch (System.Exception ex) { issues = true; Write("日志关闭失败：" + ex.Message); }
                 Write("合计：" + TagRebuildPolicy.Summary(final));
                 Write("日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
             }
+            await LogRetentionPrompt.FinishAsync(files,
+                issues || LogRetentionPolicy.RebuildHasIssues(final, total));
         }
     }
 

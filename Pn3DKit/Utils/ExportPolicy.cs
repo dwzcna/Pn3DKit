@@ -69,16 +69,9 @@ public static class ExportPolicy
         _ => throw new ArgumentException("图纸类型仅支持 P 或 D。", nameof(keyword))
     };
 
-    /// <summary>生成用户主目录下的本地时间批次路径；此步骤不创建目录。</summary>
-    public static string SuggestDirectory(string userDirectory, DateTime localTime)
-    {
-        string suggested = Path.Combine(Normalize(userDirectory), "Documents", "Pn3DKit.Export",
-            localTime.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture));
-        string candidate = suggested;
-        for (int index = 1; Directory.Exists(candidate) || File.Exists(candidate); index++)
-            candidate = suggested + "_" + index.ToString("D2", CultureInfo.InvariantCulture);
-        return candidate;
-    }
+    /// <summary>生成系统文档目录下的批次路径；此步骤不创建目录。</summary>
+    public static string SuggestDirectory(string documentsDirectory, DateTime localTime) =>
+        RunPaths.Suggest(documentsDirectory, RunLogKind.Export, localTime);
 
     /// <summary>规范完整绝对路径，拒绝相对路径与设备路径。</summary>
     public static string Normalize(string path)

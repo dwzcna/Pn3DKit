@@ -15,13 +15,16 @@ public sealed class BatchExporter
     /// <param name="token">仅阻止后续操作，不强行中断同步 CAD 调用。</param>
     /// <returns>逐图真实结果、停止原因和报告路径。</returns>
     public async Task<BatchResult> RunAsync(ProjectCatalog catalog, BatchOptions options,
-        ICadHost host, Action<string> notify, CancellationToken token = default)
+        ICadHost host, Action<string> notify, CancellationToken token = default, RunLogFiles? files = null)
     {
         token.ThrowIfCancellationRequested();
         host.EnsureProject();
         var jobs = ExportPolicy.CreateJobs(catalog, options);
+        files ??= new RunLogFiles();
+        bool existed = Directory.Exists(options.OutputDirectory);
         string directory = ExportPolicy.ReserveDirectory(options.OutputDirectory);
-        using var journal = new BatchJournal(directory);
+        if (!existed) files.OwnCreatedDirectory(directory);
+        using var journal = new BatchJournal(directory, files);
         var results = new List<DrawingResult>(jobs.Count);
         bool canceled = false, needsCheck = false;
         string? stopReason = null;

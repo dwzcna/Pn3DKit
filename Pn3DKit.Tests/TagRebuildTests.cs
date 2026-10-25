@@ -381,7 +381,7 @@ public sealed class TagRebuildTests
         try
         {
             string first = TagRebuildPaths.Suggest(root, new(2026, 10, 25, 1, 2, 3));
-            Assert.EndsWith(Path.Combine("Pn3DKit.TagRebuild", "261025010203"), first);
+            Assert.EndsWith(Path.Combine("Pn3DKit", "TagRebuild", "261025010203"), first);
             Assert.False(Directory.Exists(root));
             Directory.CreateDirectory(first);
             Assert.Equal(first + "_01", TagRebuildPaths.Suggest(root, new(2026, 10, 25, 1, 2, 3)));

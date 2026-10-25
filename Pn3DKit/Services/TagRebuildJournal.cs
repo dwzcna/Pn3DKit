@@ -7,6 +7,7 @@ namespace Pn3DKit.Services;
 /// <summary>独占创建重建日志和 CSV；预览及最终结果追加到同一历史，逐条刷新。</summary>
 public sealed class TagRebuildJournal : ITagRebuildJournal, IDisposable
 {
+    private readonly RunLogFiles _files;
     private readonly FileStream _logStream;
     private readonly FileStream _csvStream;
     private readonly StreamWriter _log;
@@ -17,14 +18,15 @@ public sealed class TagRebuildJournal : ITagRebuildJournal, IDisposable
     public string CsvPath { get; }
 
     /// <summary>两文件均以 CreateNew 打开后才开始检查，不覆盖任何已有日志。</summary>
-    public TagRebuildJournal(string directory, string drawing, IEnumerable<string> classes)
+    public TagRebuildJournal(string directory, string drawing, IEnumerable<string> classes, RunLogFiles? files = null)
     {
+        _files = files ?? new RunLogFiles();
         directory = TagRebuildPaths.Validate(directory);
-        Directory.CreateDirectory(directory);
+        _files.EnsureDirectory(directory);
         LogPath = Path.Combine(directory, "TagRebuild.log");
         CsvPath = Path.Combine(directory, "TagRebuild.csv");
-        _logStream = new(LogPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-        try { _csvStream = new(CsvPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read); }
+        _logStream = _files.CreateNew(LogPath);
+        try { _csvStream = _files.CreateNew(CsvPath); }
         catch { _logStream.Dispose(); throw; }
         _log = new(_logStream, new UTF8Encoding(false), 4096, true);
         _csv = new(_csvStream, new UTF8Encoding(true), 4096, true) { NewLine = "\r\n" };

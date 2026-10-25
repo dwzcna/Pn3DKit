@@ -128,7 +128,7 @@ public sealed class Pn3DKitTests
     {
         using var fixture = new Fixture();
         string path = ExportPolicy.SuggestDirectory(fixture.Root, new DateTime(2026, 10, 24, 15, 30, 45));
-        Assert.EndsWith(Path.Combine("Pn3DKit.Export", "261024153045"), path);
+        Assert.EndsWith(Path.Combine("Pn3DKit", "Export", "261024153045"), path);
         Assert.False(Directory.Exists(path));
         Assert.Equal(path, ExportPolicy.ReserveDirectory(path));
         File.WriteAllText(Path.Combine(path, "keep.txt"), "keep");

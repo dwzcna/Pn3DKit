@@ -9,7 +9,7 @@ public static class ProjectTagDrawingBatch
     /// <summary>保存策略全批统一；不保存时保留全部修改图纸，不设置数量上限。</summary>
     public static async Task<ProjectTagBatchResult> RunAsync(IReadOnlyList<TagRebuildPlan> plans,
         bool saveChanges, string directory, IProjectTagDrawingHost host, ITagRebuildJournal journal,
-        Action<int, int> progress)
+        Action<int, int> progress, RunLogFiles? files = null)
     {
         var records = plans.Where(x => x.State != TagRebuildState.Ready)
             .Select(TagRebuildPolicy.Preview).ToDictionary(x => x.Item.Key);
@@ -35,6 +35,7 @@ public static class ProjectTagDrawingBatch
                 checkingContext = false;
             }
             string state = "已处理", reason = "";
+            bool hasIssue = false;
             var work = job.Keys.Where(k => !records.ContainsKey(k)).Select(k => selected[k]).ToArray();
             var sync = job.Keys.Where(k => records.TryGetValue(k, out var r) && r.Action == TagRebuildAction.Updated)
                 .Select(k => records[k]).ToArray();
@@ -58,6 +59,7 @@ public static class ProjectTagDrawingBatch
                 known = true;
                 if (before.ReadOnly)
                 {
+                    hasIssue = true;
                     state = "跳过";
                     reason = "图纸为只读，未写入或保存。";
                     foreach (var plan in work) deferred[plan.Item.Key] = reason;
@@ -70,6 +72,7 @@ public static class ProjectTagDrawingBatch
                     foreach (var record in result.Records) records[record.Item.Key] = record;
                     if (result.StopReason != null || !result.SafeToSave)
                     {
+                        hasIssue = true;
                         stop = result.StopReason ?? "目标文档状态不明确。";
                         state = "已停止"; reason = stop;
                     }
@@ -77,7 +80,8 @@ public static class ProjectTagDrawingBatch
                     {
                         CheckContext();
                         string internalDirectory = Path.Combine(directory, "_internal");
-                        Directory.CreateDirectory(internalDirectory);
+                        if (files != null) files.EnsureDirectory(internalDirectory);
+                        else Directory.CreateDirectory(internalDirectory);
                         Message("统一保存选择 Y，QSAVE 包括本图原有修改：" + job.Path);
                         known = false;
                         await host.SaveAsync(drawing, Path.Combine(internalDirectory, Guid.NewGuid().ToString("N") + ".done"));
@@ -90,9 +94,10 @@ public static class ProjectTagDrawingBatch
                     else reason = "统一选择不保存；当前修改保留。";
                 }
             }
-            catch (OperationCanceledException ex) { stop = "已中断：" + ex.Message; state = "已中断"; reason = stop; }
+            catch (OperationCanceledException ex) { hasIssue = true; stop = "已中断：" + ex.Message; state = "已中断"; reason = stop; }
             catch (Exception ex)
             {
+                hasIssue = true;
                 state = "失败"; reason = ex.Message;
                 if (ex is CadOperationException cad) { known = cad.StateKnown; if (cad.StopBatch) stop = ex.Message; }
                 if (logFailed) stop = "日志写入失败：" + ex.Message;
@@ -100,6 +105,7 @@ public static class ProjectTagDrawingBatch
                 if (!known)
                 {
                     stop = "文档操作状态不明确：" + ex.Message;
+                    files?.Protect(stop);
                     foreach (var plan in work.Where(x => !records.ContainsKey(x.Item.Key)))
                     {
                         var record = new TagRebuildRecord(plan.Item, TagRebuildAction.Failed,
@@ -125,10 +131,10 @@ public static class ProjectTagDrawingBatch
                             { await host.CloseAsync(drawing); retained = false; }
                             else reason += "；保留工具打开的图纸（仍有图纸修改或项目缓存待提交）。";
                         }
-                        catch (Exception ex) { stop = "关闭前检查或关闭失败：" + ex.Message; reason += "；" + stop; }
+                        catch (Exception ex) { hasIssue = true; stop = "关闭前检查或关闭失败：" + ex.Message; reason += "；" + stop; }
                     }
                 }
-                drawings.Add(new(job.Path, state, reason, retained));
+                drawings.Add(new(job.Path, state, reason, retained) { HasIssue = hasIssue });
                 try { journal.Message($"图纸结果：{job.Path}；{state}；{reason}；保留={retained}"); }
                 catch (Exception ex) { stop = "日志写入失败：" + ex.Message; }
                 progress(drawings.Count, jobs.Count);

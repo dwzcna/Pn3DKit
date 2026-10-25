@@ -24,16 +24,8 @@ public static class ProjectTagPolicy
             .Select(g => new ProjectTagDrawingJob(g.Key, g.Select(x => x.Key).Distinct().ToArray())).ToArray();
 
     /// <summary>项目日志建议路径不创建文件；时间戳冲突递增。</summary>
-    public static string Suggest(string documents, DateTime time, bool rebuild)
-    {
-        string original = Path.Combine(ExportPolicy.Normalize(documents),
-            rebuild ? "Pn3DKit.ProjectTagRebuild" : "Pn3DKit.ProjectTagCheck",
-            time.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture));
-        string path = original;
-        for (int index = 1; Directory.Exists(path) || File.Exists(path); index++)
-            path = original + "_" + index.ToString("D2", CultureInfo.InvariantCulture);
-        return path;
-    }
+    public static string Suggest(string documents, DateTime time, bool rebuild) =>
+        RunPaths.Suggest(documents, rebuild ? RunLogKind.ProjectTagRebuild : RunLogKind.ProjectTagCheck, time);
 
     /// <summary>只验证所选项目日志对，不覆盖任何现有同名文件。</summary>
     public static string Validate(string path, bool rebuild)

@@ -7,6 +7,7 @@ namespace Pn3DKit.Services;
 /// <summary>项目级即时日志，保留图纸映射及以项目部分和数据行识别的追加历史。</summary>
 public sealed class ProjectTagJournal : ITagRebuildJournal, IDisposable
 {
+    private readonly RunLogFiles _files;
     private readonly FileStream _logFile, _csvFile;
     private readonly StreamWriter _log, _csv;
     /// <summary>文本日志完整路径。</summary>
@@ -15,15 +16,16 @@ public sealed class ProjectTagJournal : ITagRebuildJournal, IDisposable
     public string CsvPath { get; }
 
     /// <summary>两文件都使用 CreateNew，成功后才写入参数。</summary>
-    public ProjectTagJournal(string directory, bool rebuild, string project, IEnumerable<string> classes)
+    public ProjectTagJournal(string directory, bool rebuild, string project, IEnumerable<string> classes, RunLogFiles? files = null)
     {
+        _files = files ?? new RunLogFiles();
         directory = ProjectTagPolicy.Validate(directory, rebuild);
-        Directory.CreateDirectory(directory);
+        _files.EnsureDirectory(directory);
         string name = rebuild ? "ProjectTagRebuild" : "ProjectTagCheck";
         LogPath = Path.Combine(directory, name + ".log");
         CsvPath = Path.Combine(directory, name + ".csv");
-        _logFile = new(LogPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-        try { _csvFile = new(CsvPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read); }
+        _logFile = _files.CreateNew(LogPath);
+        try { _csvFile = _files.CreateNew(CsvPath); }
         catch { _logFile.Dispose(); throw; }
         _log = new(_logFile, new UTF8Encoding(false), 4096, true);
         _csv = new(_csvFile, new UTF8Encoding(true), 4096, true) { NewLine = "\r\n" };

@@ -1,6 +1,6 @@
 # Pn3DKit
 
-**Pn3DKit 0.1.9** 是 AutoCAD Plant 3D 2026 的工具插件，帮助你查看、计算、检查和按类别重建元件、SLINE 及管线组位号，并将项目图纸批量导出为普通 AutoCAD DWG。
+**Pn3DKit 0.1.20** 是 AutoCAD Plant 3D 2026 的工具插件，帮助你查看、计算、检查和按类别重建元件、SLINE 及管线组位号，并将项目图纸批量导出为普通 AutoCAD DWG。
 
 适用于 Windows x64。使用位号和项目导出功能时，需要在 Plant 3D 中打开相应项目。
 
@@ -99,7 +99,7 @@ SLINE（包括 Primary、Secondary 等子类）和管线组都可重建，可靠
 选择类别后，统一确认一次日志目录，建议位置为：
 
 ```text
-系统文档目录\Pn3DKit.TagCheck\yyMMddHHmmss
+系统文档目录\Pn3DKit\TagCheck\yyMMddHHmmss
 ```
 
 同一时间的目录已存在时，建议名称会追加 `_01`、`_02` 等序号。
@@ -123,7 +123,7 @@ SLINE（包括 Primary、Secondary 等子类）和管线组都可重建，可靠
 
 1. 图纸必须可写，并以读写方式加入当前 Plant 项目。
 2. 按类别编号选择对象，方式与批量检查相同。回车或 0 结束。
-3. 确认日志目录，默认在系统文档目录的 `Pn3DKit.TagRebuild\yyMMddHHmmss` 下。FILEDIA 和 C 选择目录方式与检查一致。
+3. 确认日志目录，默认在系统文档目录的 `Pn3DKit\TagRebuild\yyMMddHHmmss` 下。FILEDIA 和 C 选择目录方式与检查一致。
 4. 查看“一致／可重建／不可重建／冲突”的类别汇总和前 20 条预览，例如 `PT-101 → PT-102（句柄 2A3F）`。完整预检已写入 CSV，可先用支持共享读取的查看器以只读方式核对。
 5. 在“重建 N 个位号？”选择 **是／Y** 才开始写入，默认 **否／N**，保留预检日志并结束。
 6. 写入后回读验证并刷新图纸，再询问是否 QSAVE。保存默认 **否／N**；选 Y 会保存本图所有修改，包括命令执行前的修改。
@@ -164,8 +164,8 @@ Esc 会停止后续写入，保留已经完成的修改与日志。写入按一�
 
 | 命令 | 建议目录（系统文档目录下） | 文件 |
 | --- | --- | --- |
-| 项目检查 | Pn3DKit.ProjectTagCheck/yyMMddHHmmss | ProjectTagCheck.log、ProjectTagCheck.csv |
-| 项目重建 | Pn3DKit.ProjectTagRebuild/yyMMddHHmmss | ProjectTagRebuild.log、ProjectTagRebuild.csv |
+| 项目检查 | Pn3DKit/ProjectTagCheck/yyMMddHHmmss | ProjectTagCheck.log、ProjectTagCheck.csv |
+| 项目重建 | Pn3DKit/ProjectTagRebuild/yyMMddHHmmss | ProjectTagRebuild.log、ProjectTagRebuild.csv |
 
 同秒目录建议追加序号；不覆盖同名文件。CSV 为 UTF-8 BOM，包含项目部分、类别、数据行ID、所有关联图纸、句柄及结果。重建保留预检和最终动作的追加历史，以“项目部分＋数据行ID”的最后一条为准。项目变化、Esc 或日志故障会停止并保留已完成内容。
 
@@ -191,11 +191,29 @@ Esc 会停止后续写入，保留已经完成的修改与日志。写入按一�
 4. 选择 DWG 版本：**2007、2010、2013、2018**，默认 **2013**。
 5. 等待导出，查看逐图进度、统计及输出目录中的 `Export.log`。
 
-建议目录为 `%USERPROFILE%\Documents\Pn3DKit.Export\yyMMddHHmmss`。插件直接使用确认的目录，保留项目图纸层次；不会逐个文件再询问保存位置，也不会覆盖源图或已有正式输出。
+建议目录为系统文档目录下的 `Pn3DKit\Export\yyMMddHHmmss`。插件直接使用确认的目录，保留项目图纸层次；不会逐个文件再询问保存位置，也不会覆盖源图或已有正式输出。
 
 **Yes 会通过 QSAVE 保存有修改的源图，后续取消不会撤销保存。** 保存失败或保存后仍有修改的图纸不导出；已保存的只读图纸允许导出。开始前请备份项目。
 
 原来打开的图纸保持打开。取消、导出状态不明确或发现新修改时，可能保留工具打开的图纸及临时文件，请根据提示检查现场。执行时不要切换项目、图纸或启动其他命令。
+
+
+## 批次结束后保留日志
+
+批量导出、当前页及项目级的检查和重建，在处理及保存结束后统一询问：
+
+```text
+是否保留本批日志文件？[是(Y)/否(N)] <N或Y>:
+```
+
+- 全部检查一致、重建已更新或因一致正常跳过、导出全部成功时，默认 **N**。
+- 发现不符、无 Tag、临时 Tag、错误、冲突、其他跳过或未完成时，默认 **Y**；扫描异常、取消、保存或日志故障也建议保留。
+- 扫描时正常过滤无格式类别、用户选择不保存图纸，不单独算错误。回车采用显示的默认值，也可明确选 Y 或 N；Esc 保留日志。
+- 选 N 清理本批日志、CSV／JSON 报告及已结束命令的内部诊断文件。重建日志含原 Tag 和新 Tag，需要按日志恢复时请选择 Y。
+- 不删除源图、导出 DWG、临时 DWG、未结束操作的现场文件或目录中的其他文件。只清理本批创建且已为空的目录。
+- 当前无法安全询问或操作状态不明时保留文件；清理失败会显示实际剩余路径。
+
+默认目录统一在系统文档目录的 **Pn3DKit** 文件夹内，按 Export、TagCheck、TagRebuild、ProjectTagCheck、ProjectTagRebuild 分类。自选目录仍直接使用，历史目录不会迁移或清理。
 
 ## 常见提示
 

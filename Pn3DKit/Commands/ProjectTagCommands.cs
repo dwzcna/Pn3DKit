@@ -32,6 +32,8 @@ public sealed class ProjectTagCommands
         if (lease == null) { Write("已有 Pn3DKit 批次正在运行。"); return; }
         ProjectTagJournal? journal = null;
         string status = "未执行";
+        var files = new RunLogFiles();
+        bool issues = false;
         var checkedItems = new List<TagCheckResult>();
         var candidates = new List<TagRebuildCandidate>();
         IReadOnlyList<TagRebuildPlan> plans = [];
@@ -44,7 +46,7 @@ public sealed class ProjectTagCommands
             var db = document.Database;
             var identity = db.BlockTableId;
             Func<bool> isCurrent = () => true;
-            var cad = new AutoCadHost(() => isCurrent());
+            var cad = new AutoCadHost(() => isCurrent(), files);
             var original = cad.OriginalDrawing!;
             DrawingWork? work = await cad.InDocumentAsync(original, current =>
             {
@@ -59,17 +61,16 @@ public sealed class ProjectTagCommands
                 isCurrent = scan.IsCurrent;
                 var groups = SelectGroups(current.Editor, scan, Ensure, rebuild);
                 if (groups.Length == 0) return null;
-                string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                if (string.IsNullOrWhiteSpace(documents))
-                    documents = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents");
+                string documents = RunPaths.Documents();
                 string? directory = TagCheckCommands.SelectDirectory(current.Editor,
                     ProjectTagPolicy.Suggest(documents, DateTime.Now, rebuild), Ensure,
                     path => ProjectTagPolicy.Validate(path, rebuild), rebuild ? "项目位号重建" : "项目位号检查");
                 if (directory == null) return null;
                 Ensure();
                 journal = new ProjectTagJournal(directory, rebuild, PlantProjectAccess.Read().Catalog.RootDirectory,
-                    groups.Select(g => g.PartName + "/" + g.ClassName));
+                    groups.Select(g => g.PartName + "/" + g.ClassName), files);
                 Write("日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
+                issues |= scan.Warnings.Count != 0;
                 foreach (string warning in scan.Warnings) journal.Message("扫描警告：" + warning);
                 var targets = groups.SelectMany(g => g.Targets).DistinctBy(x => x.Key).ToArray();
                 total = targets.Length;
@@ -141,6 +142,7 @@ public sealed class ProjectTagCommands
                     var result = ProjectTagDataBatch.Run(plans, access, journal,
                         (done, count) => Write($"项目数据重建：{done}/{count}"));
                     final = result.Records; status = result.StopReason ?? "项目数据重建完成；未保存 DWG";
+                    issues |= result.StopReason != null;
                     return null;
                 }
                 Write("统一保存选择：Y 执行 QSAVE，包含图纸原有修改；默认不保存，全部修改图纸保持打开。");
@@ -152,13 +154,15 @@ public sealed class ProjectTagCommands
             {
                 var result = await ProjectTagDrawingBatch.RunAsync(work.Plans, work.Save,
                     Path.GetDirectoryName(journal!.LogPath)!, new PlantProjectDrawingHost(cad, work.Access), journal,
-                    (done, count) => Write($"项目图纸处理：{done}/{count}"));
+                    (done, count) => Write($"项目图纸处理：{done}/{count}"), files);
                 final = result.Records; status = result.StopReason ?? "项目图纸重建完成";
+                issues |= result.StopReason != null || result.Drawings.Any(x => x.HasIssue);
                 foreach (var drawing in result.Drawings) Write(drawing.Path + "：" + drawing.Status + "；" + drawing.Reason);
             }
         }
         catch (System.Exception ex)
         {
+            issues = true;
             status = (ex is OperationCanceledException ? "已中断：" : "已停止：") + PlantProjectTagAccess.Error(ex);
             Write(status);
             if (rebuild && final.Count == 0)
@@ -200,10 +204,13 @@ public sealed class ProjectTagCommands
                     }
                     journal.Complete(status);
                 }
-                catch (System.Exception ex) { Write("日志收尾失败：" + ex.Message); }
-                try { journal.Dispose(); } catch (System.Exception ex) { Write("日志关闭失败：" + ex.Message); }
+                catch (System.Exception ex) { issues = true; Write("日志收尾失败：" + ex.Message); }
+                try { journal.Dispose(); } catch (System.Exception ex) { issues = true; Write("日志关闭失败：" + ex.Message); }
                 Write("日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
             }
+            await LogRetentionPrompt.FinishAsync(files, issues || (rebuild
+                ? LogRetentionPolicy.RebuildHasIssues(final, total)
+                : LogRetentionPolicy.CheckHasIssues(checkedItems, total)));
         }
     }
 

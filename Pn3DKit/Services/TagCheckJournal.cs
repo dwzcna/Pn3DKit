@@ -8,6 +8,7 @@ namespace Pn3DKit.Services;
 /// <remarks>仅由 CAD 主线程或离线测试串行使用；写入失败向调用方传播并停止批次。</remarks>
 public sealed class TagCheckJournal : IDisposable
 {
+    private readonly RunLogFiles _files;
     private readonly FileStream _logStream;
     private readonly FileStream _csvStream;
     private readonly StreamWriter _log;
@@ -20,15 +21,16 @@ public sealed class TagCheckJournal : IDisposable
     public string CsvPath { get; }
 
     /// <summary>两件日志均成功打开后才写入运行参数，不覆盖既有文件。</summary>
-    public TagCheckJournal(string directory, string drawing, IReadOnlyList<string> classes, string skipped)
+    public TagCheckJournal(string directory, string drawing, IReadOnlyList<string> classes, string skipped, RunLogFiles? files = null)
     {
+        _files = files ?? new RunLogFiles();
         directory = TagCheckPaths.Validate(directory);
-        Directory.CreateDirectory(directory);
+        _files.EnsureDirectory(directory);
         LogPath = Path.Combine(directory, "TagCheck.log");
         CsvPath = Path.Combine(directory, "TagCheck.csv");
         _classes = classes.ToArray();
-        _logStream = new FileStream(LogPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-        try { _csvStream = new FileStream(CsvPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read); }
+        _logStream = _files.CreateNew(LogPath);
+        try { _csvStream = _files.CreateNew(CsvPath); }
         catch { _logStream.Dispose(); throw; }
         _log = new StreamWriter(_logStream, new UTF8Encoding(false), 4096, leaveOpen: true);
         _csv = new StreamWriter(_csvStream, new UTF8Encoding(true), 4096, leaveOpen: true) { NewLine = "\r\n" };

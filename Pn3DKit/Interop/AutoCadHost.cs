@@ -2,6 +2,7 @@ using System.Runtime.ExceptionServices;
 using System.Diagnostics;
 using Autodesk.AutoCAD.ApplicationServices;
 using Pn3DKit.Models;
+using Pn3DKit.Services;
 using Pn3DKit.Utils;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
@@ -14,6 +15,7 @@ internal sealed class AutoCadHost : ICadHost
     private readonly DocumentCollection _documents = AcadApp.DocumentManager;
     private readonly int _threadId = Environment.CurrentManagedThreadId;
     private readonly Func<bool> _isProjectCurrent;
+    private readonly RunLogFiles? _logFiles;
 
     /// <summary>记录完整块表标识，避免托管文档包装变化导致身份误判；不拥有数据库。</summary>
     private sealed record Drawing(Document Document) : ICadDrawing
@@ -30,9 +32,10 @@ internal sealed class AutoCadHost : ICadHost
     }
 
     /// <summary>记住原活动文档与项目身份，必须由 CAD 主线程创建。</summary>
-    internal AutoCadHost(Func<bool> isProjectCurrent)
+    internal AutoCadHost(Func<bool> isProjectCurrent, RunLogFiles? logFiles = null)
     {
         _isProjectCurrent = isProjectCurrent;
+        _logFiles = logFiles;
         OriginalDrawing = _documents.MdiActiveDocument is { } document ? new Drawing(document) : null;
     }
 
@@ -61,7 +64,11 @@ internal sealed class AutoCadHost : ICadHost
         void Invoke(object? unused)
         {
             try { VerifyThread(); completion.SetResult(action()); }
-            catch (System.Exception ex) { completion.SetException(ex); }
+            catch (System.Exception ex)
+            {
+                if (ex is CadOperationException { StateKnown: false }) _logFiles?.Protect(ex.Message);
+                completion.SetException(ex);
+            }
         }
         if (_documents.IsApplicationContext) Invoke(null);
         else
@@ -233,6 +240,7 @@ internal sealed class AutoCadHost : ICadHost
             var cleanupError = Detach();
             if (cleanupError != null)
                 error = new CadOperationException("LISP 等待器清理失败：" + cleanupError.Message, inner: cleanupError);
+            if (error is { StateKnown: false }) _logFiles?.Protect(error.Message);
             if (error == null) completion.TrySetResult(true);
             else completion.TrySetException(error);
         }
@@ -278,7 +286,7 @@ internal sealed class AutoCadHost : ICadHost
                 if (File.Exists(marker) || Directory.Exists(marker))
                     throw new IOException("LISP 完成标记已存在，拒绝复用：" + marker);
                 string commandPath = Path.ChangeExtension(marker, ".command.lsp");
-                using (var writer = new StreamWriter(new FileStream(commandPath, FileMode.CreateNew),
+                using (var writer = new StreamWriter(_logFiles?.CreateNew(commandPath) ?? new FileStream(commandPath, FileMode.CreateNew),
                     new System.Text.UTF8Encoding(false))) writer.WriteLine(command);
                 // 先挂接所有监听，再提交表达式；LISP 必须等当前 .NET 回调退出后才能开始。
                 attached = true;
@@ -289,6 +297,7 @@ internal sealed class AutoCadHost : ICadHost
                 document.CommandFailed += CommandFailed;
                 document.UnknownCommand += Unknown;
                 watch.Start();
+                _logFiles?.ExpectNativeFile(marker);
                 document.SendStringToExecute(command + "\n", true, false, false);
                 return true;
             });
@@ -298,7 +307,10 @@ internal sealed class AutoCadHost : ICadHost
         {
             var cleanupError = Detach();
             if (cleanupError != null)
+            {
+                _logFiles?.Protect("LISP 等待器清理失败：" + cleanupError.Message);
                 throw new CadOperationException("LISP 等待器清理失败：" + cleanupError.Message, inner: cleanupError);
+            }
         }
     }
 
