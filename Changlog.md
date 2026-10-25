@@ -17,7 +17,9 @@
 - 使用 SHA-256 已固定的原版 2026 SDK 直接解压，六个参考均兼容 .NET 8；插件 Debug／Release 构建零警告、零错误。解决方案两配置校验通过。
 - 两配置程序集均为 0.1.0.0／AMD64／.NET 8，入口属性及唯一公开命令 PNDWGEXPORT 校验通过。交付仅含 DLL、说明及内部校验；ZIP 逐项与外部 SHA-256 复算通过。
 - 用户确认沿用原版 Plant 3D 2026 SDK，删除其他运行时的相关描述；脚本已验证会拒绝不兼容参考和不匹配哈希。
-- GitHub Actions 与远端附件校验待本轮推送后执行；真实 CAD 验收待授权。日志 artifacts/validation/0.1.0/。
+- 工作流 actionlint 检查通过；main 运行 40156752798、v0.1.0 运行 40156979041 均成功，云端两配置测试、原版 SDK 下载／缓存／校验、插件构建、元数据及打包均通过。
+- 正式 Release：https://github.com/dwzcna/Pn3DKit/releases/tag/v0.1.0。已回下载 DLL、ZIP、SHA256SUMS，核对 GitHub 摘要、外部清单、ZIP 根目录、内部清单及内外 DLL 一致性；三件附件均通过，未包含 Autodesk DLL、测试、符号或运行时。
+- 发布 DLL 为 0.1.0.0／AMD64／.NET 8，仅注册 PNDWGEXPORT，SHA-256 为 31f18a198c77fa0209e842d45292ccdbaa0d51f2473f0abfd07e657d673eda15。真实 CAD 验收待授权；本轮日志 artifacts/validation/0.1.0/。
 - 原有远端 main 历史作为提交基线；本轮已授权普通推送 main 和 v0.1.0，禁止强制推送。
 
 ## 0.0.x 插件阶段归档
