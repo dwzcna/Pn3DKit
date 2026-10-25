@@ -28,7 +28,8 @@ internal sealed record PlantTagTarget(PlantTagContext Context, TagTargetKind Kin
 internal sealed record PlantTagClassGroup(string PartName, string ClassName, List<PlantTagTarget> Targets,
     bool HasFormat, string? FormatError)
 {
-    internal string DisplayName => ClassName == "PipeLineGroup" ? ClassName + "（管线组）" : ClassName;
+    /// <summary>本次扫描缓存的项目类别显示名称；缺少名称时使用实际类名。</summary>
+    internal string DisplayName { get; init; } = ClassName;
     internal string Unit => Targets.All(x => x.Kind == TagTargetKind.LineGroup) ? "组" : "个";
 }
 
@@ -43,6 +44,20 @@ internal sealed record PlantTagScan(IReadOnlyList<PlantTagClassGroup> Groups,
 /// <summary>从批量数据行取得实际类别，模型空间只用于限定直接图形范围。</summary>
 internal static class PlantTagCatalogAccess
 {
+    /// <summary>在 CAD 主线程读取类别表显示名称；普通读取错误回退类名，取消继续传播。</summary>
+    private static string ReadDisplayName(PnPDatabase database, string className)
+    {
+        try
+        {
+            string name = database.Tables[className].GetTableAttributeValue(PnPDatabase.DisplayNameAttribute);
+            return string.IsNullOrWhiteSpace(name) ? className : name;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            when (ex.ErrorStatus == Autodesk.AutoCAD.Runtime.ErrorStatus.UserBreak)
+        { throw new OperationCanceledException("用户取消读取类别显示名称。", ex); }
+        catch (System.Exception) { return className; }
+    }
     /// <summary>图纸范围或整个项目范围的统一扫描；类别发现不调用 GetObjectClassname。</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static PlantTagScan Read(Database? drawing, Action ensure)
@@ -167,8 +182,10 @@ internal static class PlantTagCatalogAccess
                     rowMap[id] = new(id, name, kind, []);
                     targets[id] = new(new(partName, part, links, id, name), kind, association.Ids,
                         association.Paths, drawing == null ? association.Handles : "", [])
-                    { RemoteHandles = string.Join("、", association.Handles.Split('、', StringSplitOptions.RemoveEmptyEntries)
-                        .Select(x => x[(x.LastIndexOf(':') + 1)..]).Distinct()) };
+                    {
+                        RemoteHandles = string.Join("、", association.Handles.Split('、', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(x => x[(x.LastIndexOf(':') + 1)..]).Distinct())
+                    };
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (System.Exception ex) { warnings.Add($"[{partName}] 数据行 {id} 关联读取失败：{ex.Message}"); }
@@ -208,11 +225,14 @@ internal static class PlantTagCatalogAccess
                 catch (OperationCanceledException) { throw; }
                 catch (System.Exception ex) { error = ex.Message; }
                 values = values.Select(x => x with { CachedFormat = format, FormatKnown = true, FormatError = error }).ToList();
-                groups.Add(new(partName, category.Key, values, format != null, error));
+                // 每个项目部分的实际类别只读取一次；后续列表及跳过提示使用缓存。
+                groups.Add(new(partName, category.Key, values, format != null, error)
+                { DisplayName = ReadDisplayName(db, category.Key) });
             }
         }
         return new(groups.OrderBy(x => x.ClassName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(x => x.PartName).ToArray(), warnings,
-            () => ReferenceEquals(project, PlantApplication.CurrentProject)) { Diagnostics = diagnostics };
+            () => ReferenceEquals(project, PlantApplication.CurrentProject))
+        { Diagnostics = diagnostics };
     }
 }
