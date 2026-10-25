@@ -1,4 +1,4 @@
-# Pn3DKit 0.1.2
+# Pn3DKit 0.1.3
 
 用于 AutoCAD Plant 3D 2026、Windows x64 的工具插件。
 
@@ -33,7 +33,7 @@ CHECKPNTAGBYCLASS 列出类别及数量后，可输入 1,3,5-7 或 *（全部）
 
 选择类别后确认日志目录，默认位于系统“文档”下的 Pn3DKit.TagCheck/yyMMddHHmmss。FILEDIA=1 时回车采用建议目录，输入 C 或点击“选择..(C)”浏览文件夹；FILEDIA=0 时在命令行输入路径。已有同名日志时需更换目录。
 
-TagCheck.log 记录参数、逐条结果及类别汇总。TagCheck.csv 可用 Excel 打开，包含类别、句柄、现有Tag、期望Tag、状态、差异字段。逐条保存结果，Esc 中断保留已写内容。命令行显示六种状态统计和前 20 条不符，完整明细见日志。
+TagCheck.log 记录参数、逐条结果及类别汇总。TagCheck.csv 可用 Excel 打开，包含类别、句柄、现有Tag、期望Tag、状态、差异字段。逐条保存结果，Esc 中断保留已写内容；切换图纸或关闭原图时停止并说明原因。命令行显示六种状态统计和前 20 条不符，完整明细见日志。
 
 ## 查看与计算
 
