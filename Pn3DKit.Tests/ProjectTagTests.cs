@@ -41,32 +41,41 @@ public sealed class ProjectTagTests : IDisposable
         { Writes++; if (Fail) throw new IOException("commit failed"); return Wrong ? "unexpected" : item.Check.ExpectedTag; }
     }
     private sealed class Drawing(string path) : ICadDrawing
-    { internal string Path = path; internal bool Modified, ReadOnly; }
+    { internal string Path = path; internal readonly Guid Identity = Guid.NewGuid(); internal bool Modified, ReadOnly, Closed; }
     private sealed class Host : IProjectTagDrawingHost
     {
         internal Dictionary<string, Drawing> Open = new(StringComparer.OrdinalIgnoreCase);
         internal Drawing Original = new("original");
         internal int Writes, Saves, Closes, Syncs, Restores;
-        internal bool Pending, Throw, WrongSave;
+        internal bool Pending, Throw, WrongSave, FailClose;
+        internal readonly HashSet<string> ReadOnlyPaths = new(StringComparer.OrdinalIgnoreCase);
+        internal readonly ScopedContextGuard Guard;
+        private Drawing _active;
+        internal Host() { _active = Original; Guard = new(() => EnsureDrawing(Original)); }
+        private void EnsureDrawing(Drawing drawing)
+        { if (drawing.Closed || _active.Identity != drawing.Identity) throw new InvalidOperationException("图纸身份不符或已关闭"); }
+        private IDisposable UseDrawing(Drawing drawing) => Guard.Use(() => EnsureDrawing(drawing));
         internal Action? OnContext;
         public ICadDrawing? OriginalDrawing => Original;
         public void CheckContext() => OnContext?.Invoke();
         public void EnsureProject() => CheckContext();
         public ICadDrawing? FindOpen(string source) => Open.GetValueOrDefault(source);
         public Task<ICadDrawing> OpenAsync(string source)
-        { var d = new Drawing(source); Open[source] = d; return Task.FromResult<ICadDrawing>(d); }
-        public Task ActivateAsync(ICadDrawing drawing) { if (drawing == Original) Restores++; return Task.CompletedTask; }
+        { var d = new Drawing(source) { ReadOnly = ReadOnlyPaths.Contains(source) }; Open[source] = d; _active = d; return Task.FromResult<ICadDrawing>(d); }
+        public Task ActivateAsync(ICadDrawing drawing) { _active = (Drawing)drawing; EnsureDrawing(_active); if (drawing == Original) Restores++; return Task.CompletedTask; }
         public Task<DrawingState> ReadStateAsync(ICadDrawing drawing)
         { var d = (Drawing)drawing; return Task.FromResult(new DrawingState(d.Modified, d.ReadOnly)); }
         public Task SaveAsync(ICadDrawing drawing, string marker)
         { Saves++; ((Drawing)drawing).Modified = WrongSave; return Task.CompletedTask; }
         public Task ExportAsync(ICadDrawing drawing, string temporary, string version, string marker) => throw new NotSupportedException();
         public Task CloseAsync(ICadDrawing drawing)
-        { Closes++; Open.Remove(((Drawing)drawing).Path); return Task.CompletedTask; }
-        public Task<bool> HasPendingDataAsync(ICadDrawing drawing) => Task.FromResult(Pending);
+        { EnsureDrawing((Drawing)drawing); if (FailClose) throw new IOException("真实关闭失败"); Closes++; ((Drawing)drawing).Closed = true; Open.Remove(((Drawing)drawing).Path); return Task.CompletedTask; }
+        public Task<bool> HasPendingDataAsync(ICadDrawing drawing)
+        { using var scope = UseDrawing((Drawing)drawing); Guard.Ensure(); return Task.FromResult(Pending); }
         public Task<TagRebuildBatchResult> RebuildAsync(ICadDrawing drawing, IReadOnlyList<TagRebuildPlan> work,
             IReadOnlyList<TagRebuildRecord> synchronize, ITagRebuildJournal journal)
         {
+            using var scope = UseDrawing((Drawing)drawing); Guard.Ensure();
             if (Throw) throw new InvalidOperationException("unknown callback");
             var result = work.Select(p => new TagRebuildRecord(p.Item, TagRebuildAction.Updated, "read back")).ToArray();
             foreach (var r in result) { Writes++; journal.Append(r); }
@@ -138,6 +147,42 @@ public sealed class ProjectTagTests : IDisposable
     { var a = Dwg("a"); var b = Dwg("b"); var h = new Host(); h.Open[a] = new Drawing(a) { ReadOnly = true };
       var r = await ProjectTagDrawingBatch.RunAsync([Plan(1, a, b)], false, _root, h, new Journal(), (_, _) => { });
       Assert.Null(r.StopReason); Assert.Equal(1, h.Writes); Assert.Equal("跳过", r.Drawings[0].Status); }
+    /// <summary>首图只读或上一图已关闭时，关闭前独立绑定当前图 Guard，跳过后继续处理。</summary>
+    [Theory] [InlineData(true)] [InlineData(false)]
+    public async Task ToolOpenedReadOnlyDoesNotAbortAfterAnotherDrawing(bool first)
+    {
+        var a = Dwg("a"); var b = Dwg("b"); var c = Dwg("c"); var h = new Host();
+        h.ReadOnlyPaths.Add(first ? a : b);
+        var result = await ProjectTagDrawingBatch.RunAsync([Plan(1, a), Plan(2, b), Plan(3, c)],
+            true, _root, h, new Journal(), (_, _) => { });
+        Assert.Null(result.StopReason); Assert.Equal(2, h.Writes); Assert.Equal(2, h.Saves);
+        Assert.Equal(3, h.Closes); Assert.Empty(h.Open); Assert.Equal(1, h.Restores);
+        var skipped = Assert.Single(result.Drawings, x => x.Status == "跳过");
+        Assert.False(skipped.Retained); Assert.Contains("只读", skipped.Reason);
+        h.Guard.Ensure();
+    }
+
+    /// <summary>实际缓存待提交时保留工具打开的只读图纸，仍继续后续可写图纸。</summary>
+    [Fact] public async Task ReadOnlyWithPendingCacheRetainsAndContinues()
+    {
+        var a = Dwg("a"); var b = Dwg("b"); var h = new Host { Pending = true };
+        h.ReadOnlyPaths.Add(a);
+        var result = await ProjectTagDrawingBatch.RunAsync([Plan(1, a), Plan(2, b)],
+            true, _root, h, new Journal(), (_, _) => { });
+        Assert.Null(result.StopReason); Assert.Equal(1, h.Writes); Assert.Equal(1, h.Saves);
+        Assert.True(result.Drawings[0].Retained); Assert.Equal(0, h.Closes); Assert.Equal(2, h.Open.Count);
+    }
+
+    /// <summary>真正关闭失败仍停止，并保留下一张图纸未执行记录。</summary>
+    [Fact] public async Task RealCloseFailureStillStops()
+    {
+        var h = new Host { FailClose = true };
+        var result = await ProjectTagDrawingBatch.RunAsync([Plan(1, Dwg("a")), Plan(2, Dwg("b"))],
+            true, _root, h, new Journal(), (_, _) => { });
+        Assert.Contains("关闭", result.StopReason); Assert.Equal(1, h.Writes);
+        Assert.Single(h.Open); Assert.Contains(result.Records, x => x.Action == TagRebuildAction.Unexecuted);
+    }
+
     /// <summary>DBMOD 清零但项目缓存未提交时仍不关闭。</summary>
     [Fact] public async Task PendingCacheRetains()
     { var h = new Host { Pending = true };

@@ -1,5 +1,19 @@
 # Pn3DKit 需求、实现与验证记录
 
+## 0.1.24（2026-10-25，候选待 CAD 复测）
+
+### 变更
+
+- 修复项目“打开图纸重建”跳过只读图纸时，关闭前缓存检查仍调用原图或上一图 Guard 导致全批停止的问题。
+- PlantProjectDrawingHost 统一通过 InDrawingAsync，在 RebuildAsync 和 HasPendingDataAsync 每次同步回调内先绑定当前数据库及完整 BlockTableId，再做可写性或缓存检查。PlantProjectTagAccess 使用内部 ScopedContextGuard，移除可变 Guard setter；using 在正常、异常及取消返回时恢复原检查。
+- 保留项目切换、Esc、状态不明及真实关闭失败的停止规则。只读图纸跳过后继续，工具打开且图纸及缓存均干净时关闭，原先打开的图纸保持打开；待提交缓存存在时保留图纸。
+- 产品／信息 0.1.24，程序集／文件 0.1.24.0；保持九条命令、.NET 8／x64、单 DLL。按本次授权在最终 0.1.25 完成后推送并发布。
+
+### 验证
+
+- x64 Debug／Release 构建均零警告、零错误；两配置最终各 409 项离线回归通过。新增作用域恢复／异常／乱序／独立线程约束，以及首图只读、上一图已关闭、缓存保留和真实关闭失败等 8 个用例。初轮线程测试使用 Task.Run 被内联导致失败，已修正为独立 Thread 并消除分析警告后重跑；初轮证据保留 tests-initial.log／debug-initial.trx。两配置版本、.NET 8／AMD64／九命令／单 DLL、SDK 来源和不复制、ZIP 及内外 SHA-256、Git 空白检查通过。日志 artifacts/validation/0.1.24/。
+- CAD 的真实只读文件占用、跨图纸连续重建、缓存与关闭状态仍待实机；本轮不自动操作用户图纸。
+
 ## 0.1.23（2026-10-25，候选待 CAD 复测）
 
 ### 变更

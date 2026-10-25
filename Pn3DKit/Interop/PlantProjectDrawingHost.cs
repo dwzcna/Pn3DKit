@@ -1,3 +1,4 @@
+using Autodesk.AutoCAD.ApplicationServices;
 using Pn3DKit.Commands;
 using Pn3DKit.Models;
 using Pn3DKit.Services;
@@ -30,18 +31,15 @@ internal sealed class PlantProjectDrawingHost(AutoCadHost cad, PlantProjectTagAc
     public Task CloseAsync(ICadDrawing drawing) => cad.CloseAsync(drawing);
     /// <inheritdoc />
     public Task<bool> HasPendingDataAsync(ICadDrawing drawing) =>
-        cad.InDocumentAsync(drawing, _ => project.HasPendingChanges());
+        InDrawingAsync(drawing, _ => project.HasPendingChanges());
 
     /// <inheritdoc />
     public Task<TagRebuildBatchResult> RebuildAsync(ICadDrawing drawing, IReadOnlyList<TagRebuildPlan> work,
         IReadOnlyList<TagRebuildRecord> synchronize, ITagRebuildJournal journal) =>
-        cad.InDocumentAsync(drawing, document =>
+        InDrawingAsync(drawing, document =>
         {
             PlantTagRebuildAccess.EnsureWritable(document);
             var db = document.Database;
-            var identity = db.BlockTableId;
-            project.Guard = () => { TagCheckCommands.EnsureDocument(db, identity); TagCheckCommands.CheckBreak(); };
-            project.EnsureContext();
             var scan = PlantTagCatalogAccess.Read(db, project.EnsureContext);
             var local = new PlantTagRebuildAccess(document, scan.IsCurrent);
             local.IndexTargets(scan);
@@ -69,6 +67,24 @@ internal sealed class PlantProjectDrawingHost(AutoCadHost cad, PlantProjectTagAc
                 journal.Message("已验证并 Regen 共享行关联图形；实际注释显示待 CAD 验收。");
             }
             return result;
+        });
+
+    /// <summary>每次操作独立绑定目标图纸，包含未执行重建的只读图关闭前检查。</summary>
+    /// <param name="drawing">本次同步操作的目标图纸。</param>
+    /// <param name="action">已进入目标文档命令上下文的同步操作。</param>
+    /// <returns>操作结果；异常仍在恢复原 Guard 后传播。</returns>
+    private Task<T> InDrawingAsync<T>(ICadDrawing drawing, Func<Document, T> action) =>
+        cad.InDocumentAsync(drawing, document =>
+        {
+            var db = document.Database;
+            var identity = db.BlockTableId;
+            using var scope = project.UseGuard(() =>
+            {
+                TagCheckCommands.EnsureDocument(db, identity);
+                TagCheckCommands.CheckBreak();
+            });
+            project.EnsureContext();
+            return action(document);
         });
 
     /// <summary>图纸写入沿用本图撤销与校验，冲突仍使用完整项目范围。</summary>

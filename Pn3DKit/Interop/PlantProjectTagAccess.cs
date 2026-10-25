@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.DataObjects;
 using Pn3DKit.Models;
+using Pn3DKit.Utils;
 
 namespace Pn3DKit.Interop;
 
@@ -14,13 +15,13 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
     private readonly Dictionary<string, List<string>> _tags = new(StringComparer.OrdinalIgnoreCase);
     private readonly int _thread = Environment.CurrentManagedThreadId;
     private bool _complete;
-    internal Action Guard { get; set; }
+    private readonly ScopedContextGuard _guard;
     internal IEnumerable<PlantTagTarget> Targets => _targets.Values;
 
     /// <summary>固定预检行与全部图纸关联；缓存完整项目占用，包括无格式及未选择对象。</summary>
     internal PlantProjectTagAccess(PlantTagScan scan, Action guard)
     {
-        _scan = scan; Guard = guard;
+        _scan = scan; _guard = new ScopedContextGuard(guard);
         _targets = scan.Targets.ToDictionary(x => x.Key);
         _associations = _targets.ToDictionary(x => x.Key, x => Associations(x.Value));
         RefreshIndex();
@@ -31,8 +32,13 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
     {
         if (_thread != Environment.CurrentManagedThreadId) throw new InvalidOperationException("项目调用离开 CAD 主线程。");
         if (!_scan.IsCurrent()) throw new InvalidOperationException("当前 Plant 项目已变化，停止批次。");
-        Guard();
+        _guard.Ensure();
     }
+
+    /// <summary>为同步图纸回调临时绑定完整数据库身份；结束后恢复命令原检查。</summary>
+    /// <param name="guard">当前图纸身份及取消检查，不允许跨异步等待使用。</param>
+    /// <returns>必须在回调返回前释放的上下文作用域。</returns>
+    internal IDisposable UseGuard(Action guard) => _guard.Use(guard);
 
     /// <summary>只有相关 PnId 库参与写入，不代为提交其他项目部分。</summary>
     public bool HasPendingChanges()
