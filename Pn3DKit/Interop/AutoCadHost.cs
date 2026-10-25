@@ -15,8 +15,19 @@ internal sealed class AutoCadHost : ICadHost
     private readonly int _threadId = Environment.CurrentManagedThreadId;
     private readonly Func<bool> _isProjectCurrent;
 
-    /// <summary>以托管包装标识文档，不取得其释放所有权。</summary>
-    private sealed record Drawing(Document Document) : ICadDrawing;
+    /// <summary>记录完整块表标识，避免托管文档包装变化导致身份误判；不拥有数据库。</summary>
+    private sealed record Drawing(Document Document) : ICadDrawing
+    {
+        internal Autodesk.AutoCAD.DatabaseServices.Database Database { get; } = Document.Database;
+        internal Autodesk.AutoCAD.DatabaseServices.ObjectId Identity { get; } = Document.Database.BlockTableId;
+    }
+
+    /// <summary>核对原数据库有效且仍为活动文档，不使用包装引用或文件名。</summary>
+    private static void EnsureActive(ICadDrawing drawing)
+    {
+        var target = (Drawing)drawing;
+        Pn3DKit.Commands.TagCheckCommands.EnsureDocument(target.Database, target.Identity);
+    }
 
     /// <summary>记住原活动文档与项目身份，必须由 CAD 主线程创建。</summary>
     internal AutoCadHost(Func<bool> isProjectCurrent)
@@ -70,16 +81,14 @@ internal sealed class AutoCadHost : ICadHost
         var execution = await InApplicationAsync(() =>
         {
             EnsureProject();
-            if (!ReferenceEquals(_documents.MdiActiveDocument, document))
-                throw new CadOperationException("活动图纸发生变化，已停止批次。");
+            EnsureActive(drawing);
             return _documents.ExecuteInCommandContextAsync(_ =>
             {
                 try
                 {
                     VerifyThread();
                     EnsureProject();
-                    if (!ReferenceEquals(_documents.MdiActiveDocument, document))
-                        throw new CadOperationException("目标图纸已不再活动。");
+                    EnsureActive(drawing);
                     using (document.LockDocument()) result = action(document);
                 }
                 catch (System.Exception ex) { failure = ex; }
@@ -232,11 +241,7 @@ internal sealed class AutoCadHost : ICadHost
             {
                 VerifyThread();
                 EnsureProject();
-                if (!ReferenceEquals(_documents.MdiActiveDocument, document))
-                {
-                    Finish(new CadOperationException("LISP 执行期间活动文档改变，保留现场。"));
-                    return;
-                }
+                EnsureActive(drawing);
                 if (watch.Elapsed > TimeSpan.FromSeconds(600))
                 {
                     Finish(new CadOperationException("等待 LISP 完成超时；已提交命令可能仍在运行，请检查 CAD。"));
@@ -265,8 +270,7 @@ internal sealed class AutoCadHost : ICadHost
             await InApplicationAsync(() =>
             {
                 EnsureProject();
-                if (!ReferenceEquals(_documents.MdiActiveDocument, document))
-                    throw new CadOperationException("提交 LISP 前活动图纸已改变。");
+                EnsureActive(drawing);
                 ExportPolicy.ValidateCadPath(marker);
                 ExportPolicy.RejectLinks(marker);
                 if (File.Exists(marker) || Directory.Exists(marker))

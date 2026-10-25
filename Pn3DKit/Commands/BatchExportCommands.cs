@@ -14,16 +14,16 @@ namespace Pn3DKit.Commands;
 /// <summary>提供 NETLOAD 后可直接调用的项目批量导出命令。</summary>
 public sealed class BatchExportCommands
 {
-    private static int _running;
-    /// <summary>供 Ribbon 判断当前批次是否仍在执行和清理。</summary>
-    internal static bool IsRunning => Volatile.Read(ref _running) != 0;
+    /// <summary>供 Ribbon 和单个命令判断所有 Pn3DKit 批次状态。</summary>
+    internal static bool IsRunning => BatchRunGate.IsRunning;
 
     /// <summary>在应用会话上下文协调多文档导出；所有异常在此入口收尾。</summary>
     /// <remarks>async void 是 CAD 命令入口契约；互斥覆盖所有等待和清理。</remarks>
     [CommandMethod("PNDWGEXPORT", CommandFlags.Session)]
     public async void PnDwgExport()
     {
-        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
+        using var lease = BatchRunGate.TryEnter();
+        if (lease == null)
         {
             Write("已有 Pn3DKit 批次正在运行。");
             return;
@@ -132,7 +132,7 @@ public sealed class BatchExportCommands
                 + (ex is FileNotFoundException or FileLoadException or TypeLoadException
                     ? "；请在已加载 Plant 环境的 AutoCAD Plant 3D 2026 中运行此命令。" : ""));
         }
-        finally { Interlocked.Exchange(ref _running, 0); }
+        // 租约在等待、异常处理和 CAD 回调清理全部结束后才释放。
     }
 
     /// <summary>向当前活动文档写入中文消息；文档失效时仅记录调试信息。</summary>

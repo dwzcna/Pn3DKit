@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.3 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.3
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.4 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.4
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.3 -OutputDirectory artifacts/release/0.1.3
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.4 -OutputDirectory artifacts/release/0.1.4
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils 中的同一份源码，不引用或加载 Autodesk。SDK 适配层通过插件编译、命令元数据检查及授权后的实际 CAD 验收验证。
@@ -68,8 +68,14 @@ $sdk = ./build/Get-PlantSdk.ps1
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.3/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.4/。
 
-## 后续版本
+## 当前实现与验收
 
-0.1.3 仅修复批量检查的图纸身份误判及停止提示，CAD 复测通过后再推送发布。REBUILDPNTAGBYCLASS 按类别重建位号计划归入 0.1.4，不包含在本版中。
+已完成：0.1.3 图纸身份修复已独立提交；0.1.4 新增 REBUILDPNTAGBYCLASS。BatchRunGate 覆盖导出、批量检查、重建及异步保存；TagRebuildPolicy 负责只读分类、注册键重号及占用链冲突；TagRebuildBatch 负责单撤销组和逐对象回读；TagRebuildJournal 保存追加历史。SDK 适配位于 PlantTagRebuildAccess，只写 PnId.Tag，并通过表继承排除 PipeLines 子类。
+
+已测试：离线策略、Fake Host 生命周期、默认否、冲突、数据行别名、日志、保存等待及异常收尾；插件通过双配置构建和六条命令元数据校验，实际结果见 Changlog.md 和 validation 日志。
+
+未完成：两版均待用户 CAD 反馈后才推送和发布。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
+
+存在的问题：无法以离线测试确认 Plant 缓存撤销与注释刷新效果；缺少注册表时只能检查本图模型空间占用，命令和日志会明确提示。SLINE 和 Piping 管线号继续跳过，不扩展到管线组赋号。

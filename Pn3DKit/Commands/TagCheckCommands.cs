@@ -48,6 +48,8 @@ public sealed class TagCheckCommands
         {
             var document = Ready("CHECKPNTAGBYCLASS");
             if (document == null) return;
+            using var lease = BatchRunGate.TryEnter();
+            if (lease == null) { WriteSafely("\n已有 Pn3DKit 批次正在运行。"); return; }
             Database database;
             ObjectId databaseIdentity;
             try
@@ -172,14 +174,15 @@ public sealed class TagCheckCommands
     /// <param name="editor">本批次开始时取得的命令行编辑器。</param>
     /// <param name="suggested">回车采用的建议日志目录。</param>
     /// <param name="ensureDocument">在输入及选择器返回时检查原数据库仍为活动图纸。</param>
-    private static string? SelectDirectory(Editor editor, string suggested, Action ensureDocument)
+    internal static string? SelectDirectory(Editor editor, string suggested, Action ensureDocument,
+        Func<string, string>? validate = null, string title = "位号检查")
     {
         int fileDia = Convert.ToInt32(AcadApp.GetSystemVariable("FILEDIA"));
         return OutputDirectorySelection.Select(fileDia, suggested,
             path =>
             {
                 ensureDocument();
-                string? selected = FolderSelectDialogue.Select(path, AcadApp.MainWindow.Handle, "Pn3DKit — 选择位号检查日志目录");
+                string? selected = FolderSelectDialogue.Select(path, AcadApp.MainWindow.Handle, "Pn3DKit — 选择" + title + "日志目录");
                 ensureDocument();
                 return selected;
             },
@@ -209,7 +212,7 @@ public sealed class TagCheckCommands
                     PromptStatus.None => "",
                     _ => null
                 };
-            }, message => WriteSafely("\n" + message), TagCheckPaths.Validate, "无法使用此日志目录：");
+            }, message => WriteSafely("\n" + message), validate ?? TagCheckPaths.Validate, "无法使用此日志目录：");
     }
 
     /// <summary>在进入 Plant API 前检查当前文档及现有导出批次。</summary>
@@ -219,7 +222,7 @@ public sealed class TagCheckCommands
         if (document == null) { WriteSafely("\n当前没有活动图纸。"); return null; }
         if (BatchExportCommands.IsRunning)
         {
-            WriteSafely("\nPn3DKit 导出批次正在运行，请等待结束后检查位号。");
+            WriteSafely("\nPn3DKit 批次正在运行，请等待结束后检查位号。");
             return null;
         }
         return document;
@@ -229,7 +232,7 @@ public sealed class TagCheckCommands
     /// <param name="originalDatabase">仅用于检查原数据库是否已释放，不比较托管引用。</param>
     /// <param name="databaseIdentity">命令开始时记录的完整 BlockTableId，不转换为句柄或文件名。</param>
     /// <remarks>先核对原数据库和标识有效性，再读取活动数据库；宿主状态异常附原始信息。</remarks>
-    private static void EnsureDocument(Database originalDatabase, ObjectId databaseIdentity)
+    internal static void EnsureDocument(Database originalDatabase, ObjectId databaseIdentity)
     {
         string? stopReason = null;
         try
@@ -265,7 +268,7 @@ public sealed class TagCheckCommands
 
     /// <summary>向当前可用的编辑器输出；图纸关闭或输出失败时降级到跟踪，不再次访问旧 Editor。</summary>
     /// <param name="message">包含所需换行的完整提示或日志路径。</param>
-    private static void WriteSafely(string message)
+    internal static void WriteSafely(string message)
     {
         System.Exception? failure = null;
         try
@@ -287,7 +290,7 @@ public sealed class TagCheckCommands
     }
 
     /// <summary>使用宿主提供的中断检查，避免消息泵造成其他 CAD 命令重入。</summary>
-    private static void CheckBreak()
+    internal static void CheckBreak()
     {
         if (HostApplicationServices.Current.UserBreak())
             throw new OperationCanceledException("用户取消。");
