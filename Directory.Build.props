@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- 产品支持三段或用户指定的四段补丁版本，程序集与文件版本始终四段。 -->
-    <Version>0.1.27</Version>
+    <Version>0.1.28</Version>
     <InformationalVersion>$(Version)</InformationalVersion>
     <AssemblyVersion Condition="$([System.String]::Copy('$(Version)').Split('.').Length) == 3">$(Version).0</AssemblyVersion>
     <AssemblyVersion Condition="$([System.String]::Copy('$(Version)').Split('.').Length) == 4">$(Version)</AssemblyVersion>

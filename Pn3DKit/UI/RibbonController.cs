@@ -52,74 +52,85 @@ internal sealed class RibbonController : IDisposable
             _control = ribbon;
             if (ribbon.Tabs.Any(t => t.Id == TabId)) return;
             _buttons.Clear();
-            var source = new RibbonPanelSource { Title = "位号与导出" };
-            source.Items.Add(Column(
-                SmallButton("CHECKPNTAG", "检查元件位号", "检查所选元件的现有位号，显示当前属性差异；SDK 求值可能更新序列字段。"),
-                SmallButton("CHECKPNTAGBYCLASS", "检查元件位号(本页)", "按类别检查当前图纸模型空间的位号，生成日志和 CSV；SDK 求值可能更新序列字段。"),
-                SmallButton("CHECKPROJECTPNTAGBYCLASS", "检查项目元件位号", "检查整个项目实际使用的元件和管线组，包含未打开图纸；SDK 求值可能更新序列字段。")));
-            source.Items.Add(Column(
-                SmallButton("EVALUATEPNTAG", "评估元件位号", "输入格式，计算所选元件对应的位号；SDK 求值可能更新序列字段。"),
-                SmallButton("REBUILDPNTAGBYCLASS", "重建元件位号", "预检后确认，重建当前图纸 PnId 位号，默认不保存；SDK 求值可能更新序列字段。"),
-                SmallButton("REBUILDPROJECTPNTAGBYCLASS", "重建项目元件位号", "预检整个项目，选择逐图重建或仅提交项目数据；默认 N 提交项目数据；SDK 求值可能更新序列字段。")));
-            source.Items.Add(Column(
-                SmallButton("GETPNTAGFORMAT", "获取位号格式", "查看所选部件实际采用的位号格式。")));
-            source.Items.Add(new RibbonSeparator { SeparatorStyle = RibbonSeparatorStyle.Line });
-            var export = new RibbonButton
-            {
-                Id = "Pn3DKit.BatchExport", Text = "批量导出CAD", ShowText = true, ShowImage = true,
-                Image = RibbonImages.Small, LargeImage = RibbonImages.Large,
-                Orientation = System.Windows.Controls.Orientation.Vertical,
-                ToolTip = new RibbonToolTip { Title = "批量导出CAD", Command = "PNDWGEXPORT",
-                    Content = "将当前 Plant 项目的 PnId 或 Piping 图纸导出为普通 DWG。" },
-                Size = RibbonItemSize.Large, CommandHandler = new QueuedCommand("PNDWGEXPORT")
-            };
-            _buttons.Add(export);
-            source.Items.Add(export);
-            var fastPanel = new RibbonButton
-            {
-                Id = "Pn3DKit.FastPanel", Text = "PN快速特性", ShowText = true, ShowImage = true,
-                Image = RibbonImages.FastPanelSmall, LargeImage = RibbonImages.FastPanelLarge,
-                Orientation = System.Windows.Controls.Orientation.Vertical, Size = RibbonItemSize.Large,
-                ToolTip = new RibbonToolTip { Title = "PN快速特性", Command = "PNFASTPANEL",
-                    Content = "显示自定义 Plant 属性；单选按 SDK 权限编辑，多选查看共同值，不自动保存图纸。" },
-                CommandHandler = new QueuedCommand("PNFASTPANEL")
-            };
-            _buttons.Add(fastPanel);
-            source.Items.Add(fastPanel);
             _ownedTab = new RibbonTab { Id = TabId, Title = "Pn3D工具箱" };
-            _ownedTab.Panels.Add(new RibbonPanel { Source = source });
+            _ownedTab.Panels.Add(QuickActions());
+            _ownedTab.Panels.Add(TagChecks());
+            _ownedTab.Panels.Add(DrawingOperations());
             ribbon.Tabs.Add(_ownedTab);
             UpdateAvailability();
         }
         catch (System.Exception ex) { BatchExportCommands.Write("Ribbon 初始化失败：" + ex.Message); }
     }
 
-    /// <summary>原生行面板形成一列，最多三行，空白单元不增加虚假按钮。</summary>
-    private static RibbonRowPanel Column(params RibbonButton[] buttons)
+    /// <summary>常用属性、格式和求值入口；特性大按钮在左，两个小按钮在右侧上下排列。</summary>
+    private RibbonPanel QuickActions() => Panel("Pn3DKit.Panel.QuickActions", "快速操作",
+        LargeButton("Pn3DKit.FastPanel", "PNFASTPANEL", "PN快速特性",
+            "显示自定义 Plant 属性；支持统一编辑所选对象的共有可写属性，不自动保存图纸。",
+            RibbonImages.FastPanelSmall, RibbonImages.FastPanelLarge),
+        Rows(
+            [SmallButton("EVALUATEPNTAG", "评估元件位号", "输入格式，计算所选元件对应的位号；SDK 求值可能更新序列字段。")],
+            [SmallButton("GETPNTAGFORMAT", "获取位号格式", "查看所选部件实际采用的位号格式。")]));
+
+    /// <summary>按单个、本图、项目分三行；本图及项目检查在左、重建在右，不创建空白按钮。</summary>
+    private RibbonPanel TagChecks() => Panel("Pn3DKit.Panel.TagChecks", "位号检查",
+        Rows(
+            [SmallButton("CHECKPNTAG", "检查元件位号", "检查所选元件的现有位号，显示当前属性差异；SDK 求值可能更新序列字段。")],
+            [SmallButton("CHECKPNTAGBYCLASS", "检查本图位号", "按类别检查当前图纸模型空间的位号，生成日志和 CSV；SDK 求值可能更新序列字段。"),
+             SmallButton("REBUILDPNTAGBYCLASS", "重建本图位号", "预检后确认，重建当前图纸 PnId 位号，默认不保存；SDK 求值可能更新序列字段。")],
+            [SmallButton("CHECKPROJECTPNTAGBYCLASS", "检查项目位号", "检查整个项目实际使用的元件和管线组，包含未打开图纸；SDK 求值可能更新序列字段。"),
+             SmallButton("REBUILDPROJECTPNTAGBYCLASS", "重建项目位号", "预检整个项目，选择逐图重建或仅提交项目数据；默认 N 提交项目数据；SDK 求值可能更新序列字段。")]));
+
+    /// <summary>导出独立成区，保留既有大图标、按钮 ID 和命令。</summary>
+    private RibbonPanel DrawingOperations() => Panel("Pn3DKit.Panel.DrawingOperations", "图纸操作",
+        LargeButton("Pn3DKit.BatchExport", "PNDWGEXPORT", "批量导出CAD",
+            "将当前 Plant 项目的 PnId 或 Piping 图纸导出为普通 DWG。", RibbonImages.Small, RibbonImages.Large));
+
+    /// <summary>固定面板身份及标题，使用原生面板边界分区，不再添加手工分隔线。</summary>
+    private static RibbonPanel Panel(string id, string title, params RibbonItem[] items)
     {
-        var column = new RibbonRowPanel();
-        foreach (var button in buttons)
-        {
-            if (column.Items.Count != 0) column.Items.Add(new RibbonRowBreak());
-            column.Items.Add(button);
-        }
-        return column;
+        var source = new RibbonPanelSource { Id = id, Title = title };
+        foreach (var item in items) source.Items.Add(item);
+        return new RibbonPanel { Source = source };
     }
 
-    /// <summary>16 DIP 矢量图标配右侧中文文字，Tooltip 保留完整命令和用途。</summary>
-    private RibbonButton SmallButton(string command, string text, string purpose)
+    /// <summary>用原生换行组织最多三行；同一行按钮横向排列，宽度一致使两列对齐。</summary>
+    private static RibbonRowPanel Rows(params RibbonButton[][] rows)
     {
-        var button = new RibbonButton
+        var panel = new RibbonRowPanel { IsTopJustified = true };
+        foreach (var row in rows)
         {
-            Id = "Pn3DKit." + command, Text = text, Size = RibbonItemSize.Standard,
-            ShowText = true, ShowImage = true, Image = RibbonImages.ForTagCommand(command),
-            Orientation = System.Windows.Controls.Orientation.Horizontal,
-            ToolTip = new RibbonToolTip { Title = text, Command = command, Content = purpose },
-            CommandHandler = new QueuedCommand(command)
-        };
+            if (panel.Items.Count != 0) panel.Items.Add(new RibbonRowBreak());
+            foreach (var button in row) panel.Items.Add(button);
+        }
+        return panel;
+    }
+
+    /// <summary>两个大按钮共用创建及注册流程，保留独立 16／32 DIP 矢量图标。</summary>
+    private RibbonButton LargeButton(string id, string command, string text, string purpose,
+        System.Windows.Media.ImageSource image, System.Windows.Media.ImageSource largeImage) => Register(new RibbonButton
+    {
+        Id = id, Text = text, ShowText = true, ShowImage = true, Image = image, LargeImage = largeImage,
+        Orientation = System.Windows.Controls.Orientation.Vertical, Size = RibbonItemSize.Large,
+        ToolTip = new RibbonToolTip { Title = text, Command = command, Content = purpose },
+        CommandHandler = new QueuedCommand(command)
+    });
+
+    /// <summary>所有分区的按钮统一登记，使空闲时的启用状态更新覆盖全部九个入口。</summary>
+    private RibbonButton Register(RibbonButton button)
+    {
         _buttons.Add(button);
         return button;
     }
+
+    /// <summary>16 DIP 矢量图标配右侧中文文字，Tooltip 保留完整命令和用途。</summary>
+    private RibbonButton SmallButton(string command, string text, string purpose) => Register(new RibbonButton
+    {
+        Id = "Pn3DKit." + command, Text = text, Size = RibbonItemSize.Standard, Width = 128, MinWidth = 128,
+        ShowText = true, ShowImage = true, Image = RibbonImages.ForTagCommand(command),
+        Orientation = System.Windows.Controls.Orientation.Horizontal,
+        ToolTip = new RibbonToolTip { Title = text, Command = command, Content = purpose },
+        CommandHandler = new QueuedCommand(command)
+    });
 
     /// <summary>空闲通知同步批次和命令忙碌状态，不依赖鼠标触发 WPF 重查。</summary>
     private void UpdateAvailability()
