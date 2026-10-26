@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.28 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.28
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.29 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.29
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.28 -OutputDirectory artifacts/release/0.1.28
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.29 -OutputDirectory artifacts/release/0.1.29
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils 中的同一份源码，不引用或加载 Autodesk。SDK 适配层通过插件编译、命令元数据检查及授权后的实际 CAD 验收验证。
@@ -59,6 +59,8 @@ $sdk = ./build/Get-PlantSdk.ps1
 
 位号检查不主动 SetProperties 写回目标 Tag、显式 AcceptChanges 或 QSAVE；期望值的自动编号片段沿用现有 Tag。SDK 拆分值须可靠回拼；非自动编号片段仍可能带 ^，ReadFields 的 Evaluate 和 RebuildTagValue 不保证无副作用。官方开发指南 GUID-08089DFF-12E7-43F4-8BD4-24C4AF3D7A89 明确说明 caret 在求值后更新序列字段，不能以 IsValid 或片段类型推导只读。三个检查、EVALUATEPNTAG 和两个重建预检入口各输出一次 TagEvaluationNotice.Text；四类检查／重建日志在日志头记录，CSV 结构及日志保留默认规则保持。保留求值算法，不回滚序列字段或增加确认步骤。
 
+PlantTagCheckAccess.ReadFields 对非自动编号的 N／NN／NNN 字段，将 RetrieveProperty 已读原值传给 FormatToolsUtil.FormatNumerals(formatCharacters, raw)，不再通过片段 Evaluate 获取数字段。TagCheckPolicy.FormatProperty 统一路由并验证结果；非空数字返回空值或格式化抛错时返回字段格式化失败，保留路径、原值、格式和可获得的 SDK 状态。该错误不由可选字段的 KeyNotFound 规则吞掉，不生成缺号期望值；共享检查与两个重建预检入口均沿用此结果。其他格式、配对字段与自动编号原有处理保持；不以本修复重新承诺所有 SDK 求值无副作用。
+
 ## 自动发布
 
 唯一工作流为 .github/workflows/dotnet-desktop.yml：
@@ -68,7 +70,7 @@ $sdk = ./build/Get-PlantSdk.ps1
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.28/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.29/。
 
 ## 当前实现与验收
 
@@ -76,7 +78,9 @@ $sdk = ./build/Get-PlantSdk.ps1
 
 已测试：离线策略、Fake Host 生命周期、默认否、冲突、数据行别名、日志、保存等待及异常收尾；插件通过双配置构建和九条命令元数据校验，实际结果见 Changlog.md 和 validation 日志。
 
-未完成：CAD 实机验收仍待执行；本轮 0.1.28 完成本机验证与候选交付后本地提交，不推送、不创建 Release。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
+本轮 0.1.29 新增 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
+
+未完成：CAD 实机验收仍待执行；本轮 0.1.29 完成本机验证与候选交付后本地提交，不推送、不创建 Release。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 

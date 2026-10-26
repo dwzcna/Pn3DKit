@@ -45,6 +45,33 @@ public static class TagCheckPolicy
         return selected.ToArray();
     }
 
+    /// <summary>非自动编号字段按已读取属性格式化；N／NN／NNN 使用 SDK 数字格式化，其余保留片段求值。</summary>
+    /// <param name="property">完整属性路径，用于失败诊断。</param>
+    /// <param name="raw">已读取且未格式化的属性值，不以 Tag 中的旧片段代替。</param>
+    /// <param name="formatCharacters">SDK 拆分的格式字符，精确识别 N、NN、NNN。</param>
+    /// <param name="formatNumerals">SDK FormatNumerals 回调；由适配层补充原始错误状态。</param>
+    /// <param name="evaluate">非数字格式的原片段求值回调，不用于数字字段。</param>
+    /// <returns>已格式化字段；数字非空却返回空值时抛出带完整上下文的异常，取消继续传播。</returns>
+    public static string FormatProperty(string property, string raw, string? formatCharacters,
+        Func<string, string, string?> formatNumerals, Func<string?> evaluate)
+    {
+        if (formatCharacters is not ("N" or "NN" or "NNN"))
+            return evaluate() ?? throw new InvalidOperationException("SDK 未返回字段值。");
+        try
+        {
+            string? expected = formatNumerals(formatCharacters, raw);
+            if (expected == null || (raw.Length != 0 && expected.Length == 0))
+                throw new InvalidOperationException("SDK FormatNumerals 返回空结果，未提供 ErrorStatus。");
+            return expected;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"字段格式化失败：属性 {property}，原值「{raw}」，格式 {formatCharacters}；{ex.Message}", ex);
+        }
+    }
+
     /// <summary>在保留原格式字面量的前提下替换字段；先验证旧值能逐字符回拼为现有 Tag。</summary>
     /// <remarks>无法对应字段或字段边界不可靠时抛出异常，不推测自动编号。</remarks>
     public static string Reconstruct(string format, string existingTag, IReadOnlyList<TagCheckField> fields)

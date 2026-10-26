@@ -88,8 +88,8 @@ internal static class PlantTagCheckAccess
         catch (System.Exception ex) { return new(subject, "", TagCheckStatus.Error, [], ex.Message); }
     }
 
-    /// <summary>按 SDK 拆出的旧值读取当前属性；只对非自动编号属性片段求值以保留格式规则。</summary>
-    /// <remarks>检查不对整式 Evaluate 或主动 AssignProperty；片段 Evaluate 与 RebuildTagValue 不保证无副作用。</remarks>
+    /// <summary>按 SDK 拆出的旧值读取当前属性；数字字段直接格式化原值，自动编号沿用原 Tag 片段。</summary>
+    /// <remarks>N／NN／NNN 使用 FormatNumerals；其余片段 Evaluate 与 RebuildTagValue 不保证无副作用。</remarks>
     private static IReadOnlyList<TagCheckField> ReadFields(FormatToolsUtil tools, ObjectId objectId,
         PlantTagContext context, string format, string tag)
     {
@@ -147,9 +147,11 @@ internal static class PlantTagCheckAccess
                         }
                         string raw = (objectId.IsNull ? tools.RetrieveProperty(propertyPath, context.RowId, context.Links)
                             : tools.RetrieveProperty(propertyPath, objectId)) ?? "";
-                        // 非自动编号片段仍可能含 ^；SDK 求值可能更新序列字段，不能据此承诺只读。
-                        string expected = Evaluate(token)
-                            ?? throw new InvalidOperationException("SDK 未返回字段值。");
+                        // 数字字段使用已读取原值；其他片段仍可能含 ^，不能据此承诺 SDK 求值只读。
+                        // 格式化错误先补充状态并转为字段错误，不能被可选属性的 KeyNotFound 规则吞掉。
+                        string expected = TagCheckPolicy.FormatProperty(propertyPath, raw, definition.msFormatCharacters,
+                            (characters, input) => Sdk(() => tools.FormatNumerals(characters, input)),
+                            () => Evaluate(token));
                         return (Raw: raw, Expected: expected);
                     }
                     catch (CadException ex) when (definition.mbOptional && ex.ErrorStatus == ErrorStatus.KeyNotFound)
