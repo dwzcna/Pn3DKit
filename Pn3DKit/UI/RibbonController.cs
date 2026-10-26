@@ -80,10 +80,13 @@ internal sealed class RibbonController : IDisposable
             [SmallButton("CHECKPROJECTPNTAGBYCLASS", "检查项目位号", "检查整个项目实际使用的元件和管线组，包含未打开图纸；SDK 求值可能更新序列字段。"),
              SmallButton("REBUILDPROJECTPNTAGBYCLASS", "重建项目位号", "预检整个项目，选择逐图重建或仅提交项目数据；默认 N 提交项目数据；SDK 求值可能更新序列字段。")]));
 
-    /// <summary>导出独立成区，保留既有大图标、按钮 ID 和命令。</summary>
+    /// <summary>图纸操作保留导出入口，右侧新增只读外参定义检查。</summary>
     private RibbonPanel DrawingOperations() => Panel("Pn3DKit.Panel.DrawingOperations", "图纸操作",
         LargeButton("Pn3DKit.BatchExport", "PNDWGEXPORT", "批量导出CAD",
-            "将当前 Plant 项目的 PnId 或 Piping 图纸导出为普通 DWG。", RibbonImages.Small, RibbonImages.Large));
+            "将当前 Plant 项目的 PnId 或 Piping 图纸导出为普通 DWG。", RibbonImages.Small, RibbonImages.Large),
+        LargeButton("Pn3DKit.XREFBLOCKCHECK", "XREFBLOCKCHECK", "外部参照检查块冲突",
+            "检查主图及外参的同名块定义，供 Bind 的 Insert 合并前核对；不绑定、不重载、不保存。",
+            RibbonImages.XrefCheckSmall, RibbonImages.XrefCheckLarge));
 
     /// <summary>固定面板身份及标题，使用原生面板边界分区，不再添加手工分隔线。</summary>
     private static RibbonPanel Panel(string id, string title, params RibbonItem[] items)
@@ -105,7 +108,7 @@ internal sealed class RibbonController : IDisposable
         return panel;
     }
 
-    /// <summary>两个大按钮共用创建及注册流程，保留独立 16／32 DIP 矢量图标。</summary>
+    /// <summary>各分区大按钮共用创建及注册流程，保留独立 16／32 DIP 矢量图标。</summary>
     private RibbonButton LargeButton(string id, string command, string text, string purpose,
         System.Windows.Media.ImageSource image, System.Windows.Media.ImageSource largeImage) => Register(new RibbonButton
     {
@@ -115,7 +118,7 @@ internal sealed class RibbonController : IDisposable
         CommandHandler = new QueuedCommand(command)
     });
 
-    /// <summary>所有分区的按钮统一登记，使空闲时的启用状态更新覆盖全部九个入口。</summary>
+    /// <summary>所有分区的按钮统一登记，使空闲时的启用状态更新覆盖全部十个入口。</summary>
     private RibbonButton Register(RibbonButton button)
     {
         _buttons.Add(button);

@@ -181,7 +181,7 @@ public sealed class LogRetentionTests : IDisposable
     /// <summary>五类新路径同秒追加序号，建议生成不创建目录。</summary>
     [Theory]
     [InlineData(RunLogKind.Export)] [InlineData(RunLogKind.TagCheck)] [InlineData(RunLogKind.TagRebuild)]
-    [InlineData(RunLogKind.ProjectTagCheck)] [InlineData(RunLogKind.ProjectTagRebuild)]
+    [InlineData(RunLogKind.ProjectTagCheck)] [InlineData(RunLogKind.ProjectTagRebuild)] [InlineData(RunLogKind.XrefBlockCheck)]
     public void UnifiedDirectories(RunLogKind kind)
     {
         DateTime time = new(2026, 10, 25, 1, 2, 3);

@@ -2,8 +2,8 @@ using System.Globalization;
 
 namespace Pn3DKit.Utils;
 
-/// <summary>统一文档目录下的五种批次目录。</summary>
-public enum RunLogKind { Export, TagCheck, TagRebuild, ProjectTagCheck, ProjectTagRebuild }
+/// <summary>统一文档目录下的各类批次目录。</summary>
+public enum RunLogKind { Export, TagCheck, TagRebuild, ProjectTagCheck, ProjectTagRebuild, XrefBlockCheck }
 
 /// <summary>只生成路径，不迁移历史目录；系统文档重定向时沿用系统位置。</summary>
 public static class RunPaths

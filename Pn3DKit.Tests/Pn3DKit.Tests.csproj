@@ -22,6 +22,8 @@
     <Compile Include="../Pn3DKit/UI/FastPropertiesView.cs" Link="UI/FastPropertiesView.cs" />
     <Compile Include="../Pn3DKit/UI/FastPanelControlStyles.cs" Link="UI/FastPanelControlStyles.cs" />
     <Compile Include="../Pn3DKit/UI/PropertyCatalogView.cs" Link="UI/PropertyCatalogView.cs" />
+    <!-- 真实来源检索代码链接最小 SDK 替身，验证只读路径和释放；不加载 Autodesk。 -->
+    <Compile Include="../Pn3DKit/Interop/XrefBlockCadCatalog.cs" Link="Interop/XrefBlockCadCatalog.cs" />
     <Compile Include="../Pn3DKit/Models/**/*.cs" Link="Models/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../Pn3DKit/Services/**/*.cs" Link="Services/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../Pn3DKit/Utils/**/*.cs" Link="Utils/%(RecursiveDir)%(Filename)%(Extension)" />

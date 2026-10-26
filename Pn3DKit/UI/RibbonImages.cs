@@ -19,6 +19,30 @@ internal static class RibbonImages
     /// <summary>PN快速特性小图标，供 Ribbon 缩放使用。</summary>
     internal static ImageSource FastPanelSmall { get; } = CreateFastPanel(16);
 
+    /// <summary>外参冲突检查使用叠放块定义与检查标记，分别适配大、小按钮。</summary>
+    internal static ImageSource XrefCheckLarge { get; } = CreateXrefCheck(32);
+    /// <summary>外参检查按钮缩小时的矢量图标。</summary>
+    internal static ImageSource XrefCheckSmall { get; } = CreateXrefCheck(16);
+
+    /// <summary>在内存中绘制两个不同来源的块及放大检查标记，不增加图像文件依赖。</summary>
+    private static DrawingImage CreateXrefCheck(double size)
+    {
+        var group = new DrawingGroup { Transform = new ScaleTransform(size / 32, size / 32) };
+        var blue = new SolidColorBrush(MediaColor.FromRgb(44, 108, 171));
+        var orange = new SolidColorBrush(MediaColor.FromRgb(216, 139, 43));
+        using (var context = group.Open())
+        {
+            context.DrawRectangle(System.Windows.Media.Brushes.Transparent, null, new Rect(0, 0, 32, 32));
+            context.DrawRoundedRectangle(new SolidColorBrush(MediaColor.FromRgb(230, 241, 252)), new MediaPen(blue, 1.5), new Rect(2, 3, 18, 21), 2, 2);
+            context.DrawRoundedRectangle(new SolidColorBrush(MediaColor.FromRgb(247, 238, 219)), new MediaPen(orange, 1.5), new Rect(10, 8, 18, 21), 2, 2);
+            context.DrawGeometry(null, new MediaPen(blue, 1.7), Geometry.Parse("M5,9 L9,6 L13,9 L9,12 Z M5,9 L5,15 L9,18 L9,12 M9,18 L13,15 L13,9"));
+            context.DrawEllipse(new SolidColorBrush(MediaColor.FromRgb(242, 250, 255)), new MediaPen(blue, 2), new System.Windows.Point(21, 20), 6, 6);
+            context.DrawLine(new MediaPen(blue, 2.5), new System.Windows.Point(25, 24), new System.Windows.Point(30, 30));
+            context.DrawGeometry(null, new MediaPen(orange, 1.8), Geometry.Parse("M18,20 L20,22 L24,17"));
+        }
+        var image = new DrawingImage(group); image.Freeze(); return image;
+    }
+
     /// <summary>绘制固定边界的可停靠属性面板矢量，无外部图片依赖。</summary>
     private static DrawingImage CreateFastPanel(double size)
     {

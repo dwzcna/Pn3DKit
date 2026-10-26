@@ -1,6 +1,6 @@
-# Pn3DKit 0.1.29
+# Pn3DKit 0.1.30
 
-用于 AutoCAD Plant 3D 2026、Windows x64 的工具插件。
+用于 AutoCAD／Plant 3D 2026、Windows x64 的工具插件。外参块检查不要求 Plant 项目，其他 Plant 功能需要相应环境。
 
 
 ## Ribbon 入口
@@ -11,7 +11,7 @@
 | --- | --- |
 | 快速操作 | 左侧大按钮“PN快速特性”；右侧上下排列“评估元件位号”“获取位号格式” |
 | 位号检查 | 第一行“检查元件位号”；第二行“检查本图位号／重建本图位号”；第三行“检查项目位号／重建项目位号” |
-| 图纸操作 | 独立大按钮“批量导出CAD” |
+| 图纸操作 | 左侧“批量导出CAD”，右侧“外部参照检查块冲突”，均为大按钮 |
 
 七个位号按钮使用 16 DIP 小图标和右侧中文文字，统一宽度 128 DIP；PN快速特性及批量导出CAD 保留大图标。检查在左、重建在右，Tooltip 显示完整命令、操作范围和必要提示。单对象命令保留预选；CAD 忙碌或批次运行时禁用入口，工作空间重载后自动恢复，不重复创建选项卡。
 
@@ -32,6 +32,7 @@
 | GETPNTAGFORMAT | 查看一个部件采用的位号格式 |
 | EVALUATEPNTAG | 输入格式，计算所选部件对应的位号 |
 | PNDWGEXPORT | 将项目 PnId／Piping 图纸批量导出为普通 AutoCAD DWG |
+| XREFBLOCKCHECK | 检查主图及外参的同名块定义冲突，供 Bind 的 Insert 合并前核对 |
 
 CHECKPNTAG、GETPNTAGFORMAT、EVALUATEPNTAG 均支持先选择部件再执行命令，也支持执行后选择一个部件、回车确认。批量检查按当前图纸扫描，不使用预选范围。
 
@@ -45,6 +46,14 @@ SLINE（包括 Primary、Secondary 等子类）和管线组都可重建，可靠
 
 选择管线组只更新组自身配置的 Tag，不改写 Service、LineNumber、NominalSize 或成员关系，也不自动重建未选择的 SLINE。预览列明成员、关联图纸及跨图纸共享范围；组先于成员处理，成员期望值变化时须重新预检。组没有自身句柄，使用真实数据行 ID 识别。
 
+
+## 外部参照检查块冲突
+
+执行 `XREFBLOCKCHECK`，或点击“图纸操作”中的同名按钮，确认一次日志目录后检查主图及直接／可传播的嵌套外参。同名定义按内容归组，列出差异与来源；主图未插入的块、仅外参之间的冲突也参与。无法完整读取或解释的实体、资源、动态／三维数据不会判为一致。
+
+不绑定、不插入、不重载、不保存；已加载数据使用宿主当前数据库，未加载文件旁路只读读取。支持 Esc；切换或关闭原图停止。默认目录为 `文档\Pn3DKit\XrefBlockCheck\yyMMddHHmmss`，生成逐条刷新的 `XrefBlockCheck.log` 和 UTF-8 BOM CSV；FILEDIA 和 C 选择目录沿用现有流程，结束时询问保留日志。
+
+动态原生 EvalGraph、约束子实体／专有参数、部分曲面 UV 修剪与子实体外观、网格棱折／材质和代理数据仍可能或必然标记为无法完整比较；报告会具体列出原因。报告不保证模拟最终 Bind → Insert 行为。覆盖与限制：https://github.com/dwzcna/Pn3DKit/blob/main/docs/XrefBlockCheck.md 。真实 CAD 对照待复测。
 
 ## PN快速特性
 
@@ -142,7 +151,7 @@ Yes／Y 会通过 QSAVE 保存有修改的源图，取消不会撤销保存；No
 
 ## 批次结束后保留日志
 
-批量导出、当前页及项目级的检查和重建，在处理及保存结束后统一询问：
+批量导出、外参块检查、当前页及项目级的检查和重建，在处理及保存结束后统一询问：
 
 ```text
 是否保留本批日志文件？[是(Y)/否(N)] <N或Y>:
@@ -155,7 +164,7 @@ Yes／Y 会通过 QSAVE 保存有修改的源图，取消不会撤销保存；No
 - 不删除源图、导出 DWG、临时 DWG、未结束操作的现场文件或目录中的其他文件。只清理本批创建且已为空的目录。
 - 当前无法安全询问或操作状态不明时保留文件；清理失败会显示实际剩余路径。
 
-默认目录统一在系统文档目录的 **Pn3DKit** 文件夹内，按 Export、TagCheck、TagRebuild、ProjectTagCheck、ProjectTagRebuild 分类。自选目录仍直接使用，历史目录不会迁移或清理。
+默认目录统一在系统文档目录的 **Pn3DKit** 文件夹内，按 Export、XrefBlockCheck、TagCheck、TagRebuild、ProjectTagCheck、ProjectTagRebuild 分类。自选目录仍直接使用，历史目录不会迁移或清理。
 
 ## 说明与校验
 
