@@ -149,5 +149,5 @@ namespace Autodesk.AutoCAD.DatabaseServices
 namespace Pn3DKit.Commands
 {
     /// <summary>模拟同类型的批次身份停止异常；不模拟真实文档管理器。</summary>
-    internal sealed class XrefCheckStoppedException(string message) : InvalidOperationException(message);
+    internal sealed class XrefCheckStoppedException(string message, System.Exception? inner = null) : InvalidOperationException(message, inner);
 }

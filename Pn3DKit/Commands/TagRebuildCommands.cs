@@ -50,7 +50,7 @@ public sealed class TagRebuildCommands
                 var groups = SelectGroups(document.Editor, scan, access.EnsureContext);
                 if (groups == null || groups.Length == 0) return false;
                 string documents = RunPaths.Documents();
-                string? directory = TagCheckCommands.SelectDirectory(document.Editor,
+                string? directory = CadOutputDirectoryPrompt.Select(document.Editor,
                     TagRebuildPaths.Suggest(documents, DateTime.Now), access.EnsureContext,
                     TagRebuildPaths.Validate, "位号重建");
                 if (directory == null) return false;

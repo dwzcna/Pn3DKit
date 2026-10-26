@@ -63,7 +63,7 @@ public sealed class ProjectTagCommands
                 var groups = SelectGroups(current.Editor, scan, Ensure, rebuild);
                 if (groups.Length == 0) return null;
                 string documents = RunPaths.Documents();
-                string? directory = TagCheckCommands.SelectDirectory(current.Editor,
+                string? directory = CadOutputDirectoryPrompt.Select(current.Editor,
                     ProjectTagPolicy.Suggest(documents, DateTime.Now, rebuild), Ensure,
                     path => ProjectTagPolicy.Validate(path, rebuild), rebuild ? "项目位号重建" : "项目位号检查");
                 if (directory == null) return null;

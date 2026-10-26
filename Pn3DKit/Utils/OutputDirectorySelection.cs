@@ -12,27 +12,37 @@ public static class OutputDirectorySelection
     /// <param name="notify">输出路径无效或冲突的原因，之后重新提示。</param>
     /// <param name="validate">可选的用途专属目录验证；默认保持导出验证。</param>
     /// <param name="invalidPrefix">目录验证失败时的用途提示。</param>
+    /// <param name="ensureContext">可选上下文检查；在交互和验证前后执行，异常直接传播。</param>
     /// <returns>确认后的完整目录；取消时为空。</returns>
     public static string? Select(int fileDia, string suggested, Func<string, string?> showDialog,
         Func<string, string?> readLine, Action<string> notify, Func<string, string>? validate = null,
-        string invalidPrefix = "无法使用此导出目录：")
+        string invalidPrefix = "无法使用此导出目录：", Action? ensureContext = null)
     {
         while (true)
         {
+            ensureContext?.Invoke();
             string? input = readLine(suggested);
+            ensureContext?.Invoke();
             if (input == null) return null;
             if (fileDia != 0 && input.Equals("C", StringComparison.OrdinalIgnoreCase))
             {
+                ensureContext?.Invoke();
                 input = showDialog(suggested);
+                ensureContext?.Invoke();
                 if (input == null) return null;
             }
             string path = input.Trim();
             if (path.Length >= 2 && path[0] == '"' && path[^1] == '"') path = path[1..^1];
-            try { return (validate ?? ExportPolicy.ValidateOutputDirectory)(path.Length == 0 ? suggested : path); }
+            ensureContext?.Invoke();
+            string validated;
+            try { validated = (validate ?? ExportPolicy.ValidateOutputDirectory)(path.Length == 0 ? suggested : path); }
             catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
             {
                 notify(invalidPrefix + ex.Message);
+                continue;
             }
+            ensureContext?.Invoke();
+            return validated;
         }
     }
 }

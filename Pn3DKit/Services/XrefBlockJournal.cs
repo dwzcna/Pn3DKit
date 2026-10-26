@@ -306,6 +306,9 @@ public sealed class XrefBlockJournal : IDisposable
             _log.WriteLine("结束时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
             _log.WriteLine("批次状态：" + result.State + (result.HasIssues ? "；统计仅含已确认名称，不代表完整范围。" : ""));
             if (result.StopReason != null) _log.WriteLine("停止原因：" + result.StopReason);
+            foreach (var pending in result.Inventory.Sources.Where(s => s.DwgNo == 0))
+                _log.WriteLine("未扫描来源：" + pending.Key + " | " + pending.Drawing
+                    + (pending.Error == null ? "；尚未进入名称扫描。" : "；" + pending.Error));
             var sourceCounts = result.Inventory.Entries.GroupBy(e => e.Source.DwgNo).ToDictionary(g => g.Key, g => g.Count());
             foreach (var source in result.Inventory.Sources.Where(s => s.DwgNo > 0).OrderBy(s => s.DwgNo))
                 _log.WriteLine("来源汇总：dwgNo=" + source.DwgNo + " | " + source.Drawing

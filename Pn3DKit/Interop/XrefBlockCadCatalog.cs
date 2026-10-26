@@ -27,11 +27,17 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         internal Dictionary<ObjectId, BlockContentSnapshot> Definitions { get; } = [];
         internal XrefBlockSnapshotReader? Reader { get; set; }
         internal List<(ObjectId Id, string Alias, string Path, bool Overlay, Database? Loaded, string Status)> References { get; } = [];
-        internal bool Indexed { get; set; }
+        internal bool RelationsIndexed { get; set; }
+        internal bool RelationsRead { get; set; }
+        internal Dictionary<ObjectId, ReferenceStamp> ReferenceStamps { get; set; } = [];
         internal string? Error { get; set; }
         internal string? DiskStamp { get; set; }
         internal XrefBlockSource Snapshot => new(Key, Drawing, Mode, Host, Chains.OrderBy(x => x, StringComparer.Ordinal).ToArray(), Error, DwgNo);
     }
+
+    /// <summary>完整关系身份快照，不使用数据库托管包装引用比较宿主数据状态。</summary>
+    internal sealed record ReferenceStamp(ObjectId Identity, string Name, string Path, bool Overlay,
+        bool Unloaded, string Status, ObjectId LoadedIdentity);
 
     private readonly Action _ensure;
     private readonly XrefBlockJournal _journal;
@@ -43,8 +49,9 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     private readonly List<Database> _owned = [];
     private readonly List<XrefBlockSource> _failures = [];
     private readonly SourceState _host;
-    private bool _discoveryFinished;
-    private Action<int, string>? _nameProgress;
+    private bool _discoveryFinished, _namesFinished;
+    private SourceState[] _scanPlan = [];
+    private Action<int, string>? _nameProgress, _sourceFound;
     private int _nameCount;
     /// <summary>实际候选根读取数，不含名称扫描及缓存命中。</summary>
     internal int RootReads { get; private set; }
@@ -97,6 +104,8 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         var source = new SourceState(database, "来源" + (_sources.Count + 1), drawing, mode, host);
         if (!host && _livePrefixes.TryGetValue(identity, out var prefixes)) source.Prefixes.UnionWith(prefixes);
         _sources.Add(identity, source);
+        _journal.Source(source.Snapshot);
+        _sourceFound?.Invoke(_sources.Count, source.Drawing);
         return source;
     }
 
@@ -107,26 +116,105 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     internal static string Detail(System.Exception ex) => ex is CadException cad
         ? "SDK ErrorStatus=" + cad.ErrorStatus + "：" + cad.Message : ex.GetType().Name + "：" + ex.Message;
 
-    /// <summary>建立全部引用链后再固定来源清单，命名定义包括未插入块。</summary>
-    internal void Discover(Action<int, string>? progress = null)
+    /// <summary>先冻结全部已确认来源，再逐图扫描名称；原名称行数回调保持独立。</summary>
+    /// <param name="progress">名称每 50 行及本图结束时的累计名称数，不代表图纸序号。</param>
+    /// <param name="sourceFound">来源发现期间的新来源数量和路径，同源多链只通知一次。</param>
+    /// <param name="scanStarted">名称文件表头刷新后、读取块表前通知图纸序号、固定总数及路径。</param>
+    internal void Discover(Action<int, string>? progress = null, Action<int, string>? sourceFound = null,
+        Action<int, int, string>? scanStarted = null)
     {
-        _nameProgress = progress;
+        _nameProgress = progress; _sourceFound = sourceFound;
+        sourceFound?.Invoke(_sources.Count, _host.Drawing);
         Visit(_host, _host.Drawing, 0, []);
-        foreach (var source in _sources.Values) _journal.Source(source.Snapshot);
-        foreach (var failure in _failures) _journal.Source(failure);
+        _scanPlan = _sources.Values.ToArray();
         _discoveryFinished = true;
+        _journal.Notice("外参来源发现完成：已确认来源 " + _scanPlan.Length
+            + (ScopeComplete ? "；即将按固定总数扫描名称。" : "；范围不完整，总数仅覆盖已确认来源。"));
+        foreach (var source in _scanPlan) _journal.Source(source.Snapshot);
+        foreach (var failure in _failures) _journal.Source(failure);
+        foreach (var source in _scanPlan)
+        {
+            _ensure(); VerifySource(source);
+            try { Index(source, scanStarted); }
+            catch (OperationCanceledException) { throw; }
+            catch (XrefBlockLogException) { throw; }
+            catch (Pn3DKit.Commands.XrefCheckStoppedException) { throw; }
+            catch (CadException ex) when (ex.ErrorStatus == ErrorStatus.UserBreak)
+            { throw new OperationCanceledException("用户取消。", ex); }
+            catch (System.Exception ex)
+            { source.Error = Detail(ex); Incomplete(source.Drawing + "：" + source.Error); }
+        }
+        _namesFinished = true;
     }
 
-    /// <summary>每个数据库只建立一次名称及外参关系清单，不枚举块实体。</summary>
-    private void Index(SourceState source)
+    /// <summary>枚举只读块表，记录的 SDK 对象只在当前事务内使用，不读取实体或引用数量。</summary>
+    private List<(ObjectId Id, BlockTableRecord Block)> ReadBlocks(SourceState source, Transaction transaction)
     {
-        if (source.Indexed) return;
-        source.Indexed = true;
+        var table = (BlockTable)transaction.GetObject(source.Database.BlockTableId, OpenMode.ForRead);
+        var records = new List<(ObjectId Id, BlockTableRecord Block)>();
+        foreach (ObjectId id in table)
+        {
+            _ensure();
+            var block = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
+            if (!block.IsLayout) records.Add((id, block));
+        }
+        return records;
+    }
+
+    /// <summary>仅捕获外参容器的关系元数据，普通块的名称和内容不在来源发现阶段读取。</summary>
+    private List<(ReferenceStamp Stamp, Database? Loaded)> ReadReferences(SourceState source,
+        IReadOnlyList<(ObjectId Id, BlockTableRecord Block)> records)
+    {
+        var references = new List<(ReferenceStamp Stamp, Database? Loaded)>();
+        foreach (var (id, block) in records.Where(x => x.Block.IsFromExternalReference))
+        {
+            _ensure();
+            if (source.Host && block.IsDependent) continue;
+            Database? loaded = !block.IsUnloaded && block.XrefStatus == XrefStatus.Resolved
+                ? block.GetXrefDatabase(false) : null;
+            ObjectId loadedIdentity = loaded is { IsDisposed: false } ? loaded.BlockTableId : default;
+            references.Add((new(id, block.Name, block.PathName, block.IsFromOverlayReference,
+                block.IsUnloaded, block.XrefStatus.ToString(), loadedIdentity), loaded));
+        }
+        return references;
+    }
+
+    /// <summary>关系阶段只建立外参索引；相同来源的多条到达链不重复枚举块表。</summary>
+    private void IndexReferences(SourceState source)
+    {
+        if (source.RelationsIndexed) return;
+        source.RelationsIndexed = true;
+        _ensure();
+        using var transaction = source.Database.TransactionManager.StartOpenCloseTransaction();
+        var references = ReadReferences(source, ReadBlocks(source, transaction));
+        source.ReferenceStamps = references.ToDictionary(x => x.Stamp.Identity, x => x.Stamp);
+        var unmapped = new List<string>();
+        foreach (var reference in references)
+        {
+            var stamp = reference.Stamp;
+            string? original = XrefBlockNames.RemoveSourceNamespace(stamp.Name, source.Prefixes);
+            if (original == null || original.Contains('|')) { unmapped.Add(original ?? stamp.Name); continue; }
+            source.References.Add((stamp.Identity, original, stamp.Path, stamp.Overlay, reference.Loaded, stamp.Status));
+        }
+        foreach (string stored in unmapped)
+            if (!source.References.Any(r => stored.StartsWith(r.Alias + "|", StringComparison.OrdinalIgnoreCase)))
+                Incomplete(source.Drawing + "：外参容器的原始名称无法确认，关系范围不完整：" + stored);
+        source.RelationsRead = true;
+    }
+
+    /// <summary>每图开始先创建和刷新表头；取消及错误也最终关闭清单，编号按冻结顺序递增。</summary>
+    private void Index(SourceState source, Action<int, int, string>? scanStarted)
+    {
         _ensure();
         var scan = _journal.BeginNames(source.Snapshot);
         source.DwgNo = scan.DwgNo;
         string state = "完成", detail = "";
-        try { IndexNames(source, scan); }
+        try
+        {
+            scanStarted?.Invoke(source.DwgNo, _scanPlan.Length, source.Drawing);
+            if (!source.RelationsRead) throw new IOException("来源关系未完整读取，无法验证名称范围：" + source.Error);
+            IndexNames(source, scan);
+        }
         catch (System.Exception ex)
         {
             state = ex switch
@@ -143,34 +231,19 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         finally { _journal.EndNames(scan, state, detail); }
     }
 
-    /// <summary>原名确认后立刻输出清单并缓存；不等待其他来源或 ReadNames。</summary>
+    /// <summary>核对两阶段关系一致；原名确认后立刻输出并缓存，不等待其他图纸。</summary>
     private void IndexNames(SourceState source, XrefBlockJournal.NameScan scan)
     {
         using var transaction = source.Database.TransactionManager.StartOpenCloseTransaction();
-        var table = (BlockTable)transaction.GetObject(source.Database.BlockTableId, OpenMode.ForRead);
-        var records = new List<(ObjectId Id, BlockTableRecord Block)>();
-        foreach (ObjectId id in table)
+        var records = ReadBlocks(source, transaction);
+        var current = ReadReferences(source, records);
+        if (current.Count != source.ReferenceStamps.Count || current.Any(reference =>
+            !source.ReferenceStamps.TryGetValue(reference.Stamp.Identity, out var previous) || previous != reference.Stamp))
         {
-            _ensure();
-            var block = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
-            if (block.IsLayout) continue;
-            records.Add((id, block));
+            source.Error = "来源外参关系已变化：" + source.Drawing + "；请重新扫描。";
+            Incomplete(source.Error);
+            throw new Pn3DKit.Commands.XrefCheckStoppedException(source.Error, new InvalidOperationException(source.Error));
         }
-        var unmappedReferences = new List<string>();
-        // 先取得本源的直接外参名，再判别子命名空间，不能依赖块表创建顺序。
-        foreach (var (id, block) in records.Where(x => x.Block.IsFromExternalReference))
-        {
-            _ensure();
-            if (source.Host && block.IsDependent) continue;
-            string? original = XrefBlockNames.RemoveSourceNamespace(block.Name, source.Prefixes);
-            if (original == null || original.Contains('|')) { unmappedReferences.Add(original ?? block.Name); continue; }
-            Database? loaded = null;
-            if (!block.IsUnloaded && block.XrefStatus == XrefStatus.Resolved) loaded = block.GetXrefDatabase(false);
-            source.References.Add((id, original, block.PathName, block.IsFromOverlayReference, loaded, block.XrefStatus.ToString()));
-        }
-        foreach (string stored in unmappedReferences)
-            if (!source.References.Any(r => stored.StartsWith(r.Alias + "|", StringComparison.OrdinalIgnoreCase)))
-                Incomplete(source.Drawing + "：外参容器的原始名称无法确认，关系范围不完整：" + stored);
         foreach (var (id, block) in records.Where(x => !x.Block.IsFromExternalReference))
         {
             _ensure();
@@ -196,7 +269,7 @@ internal sealed class XrefBlockCadCatalog : IDisposable
             if (++_nameCount % 50 == 0) _nameProgress?.Invoke(_nameCount, source.Drawing);
         }
         _nameProgress?.Invoke(_nameCount, source.Drawing);
-        _journal.Notice("来源名称扫描完成：" + source.Key + " | " + source.Drawing
+        _journal.Notice("来源名称扫描完成：dwgNo=" + source.DwgNo + "/" + _scanPlan.Length + " | " + source.Drawing
             + " | 名称 " + source.Blocks.Count + "；其中匿名 " + source.Blocks.Count(x => x.Anonymous)
             + "；只统计块名称，不读取实体或引用数量。");
     }
@@ -205,11 +278,11 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     private void Visit(SourceState source, string chain, int depth, HashSet<ObjectId> ancestors)
     {
         _ensure();
-        if (source.Chains.Add(chain) && source.Indexed) _journal.SourceChain(source.Key, chain);
+        if (source.Chains.Add(chain) && source.DwgNo > 0) _journal.SourceChain(source.Key, chain);
         if (!ancestors.Add(source.Identity)) { Incomplete("循环外参关系：" + chain); return; }
         try
         {
-            Index(source);
+            IndexReferences(source);
             foreach (var reference in source.References)
             {
                 _ensure();
@@ -312,14 +385,14 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     internal XrefBlockInventory CaptureNames()
     {
         var entries = new List<XrefBlockNameEntry>();
-        var sources = _sources.Values.Where(s => s.DwgNo > 0).Select(s => s.Snapshot).Concat(_failures).ToArray();
+        var sources = _sources.Values.Select(s => s.Snapshot).Concat(_failures).ToArray();
         foreach (var source in _sources.Values.Where(s => s.DwgNo > 0))
         {
             var snapshot = source.Snapshot;
             foreach (var (name, anonymous) in source.Blocks)
                 entries.Add(new(name, snapshot, anonymous));
         }
-        return new(entries, sources, ScopeComplete && _discoveryFinished);
+        return new(entries, sources, ScopeComplete && _discoveryFinished && _namesFinished);
     }
 
     /// <summary>只为跨来源命名候选读取二维定义，必要依赖由本源读取器缓存；不查询插入数量。</summary>

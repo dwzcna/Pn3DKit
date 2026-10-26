@@ -202,28 +202,29 @@ public sealed class XrefCatalogTests : IDisposable
         Assert.False(catalog.ScopeComplete);
     }
 
-    /// <summary>第一次读取来源块表前清单表头已经可见，不等待 ReadNames 或其他来源。</summary>
+    /// <summary>关系预遍历不创建名称清单；名称阶段第一次读取块表前表头已经可见。</summary>
     [Fact]
     public void SourceHeaderExistsBeforeBlockTableRead()
     {
         var main = Source("A.dwg"); main.Block("Valve");
-        int checkedHeader = 0;
+        int checkedHeader = 0, censusReads = 0; bool naming = false;
         Database.OnGetObject = (database, id) =>
         {
             if (database != main || id != main.BlockTableId) return;
+            if (!naming) { Assert.Empty(Directory.GetFiles(_root, "A__*.csv")); censusReads++; return; }
             string path = Assert.Single(Directory.GetFiles(_root, "A__*.csv"));
             Assert.Equal("块名称,是否匿名\r\n", XrefNameCsvTests.ReadLive(path));
             checkedHeader++;
         };
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
-        catalog.Discover();
-        Assert.Equal(1, checkedHeader);
+        catalog.Discover(scanStarted: (_, _, _) => naming = true);
+        Assert.Equal(1, censusReads); Assert.Equal(1, checkedHeader);
         Assert.Equal("块名称,是否匿名\r\nValve,否\r\n",
             File.ReadAllText(Assert.Single(Directory.GetFiles(_root, "A__*.csv"))));
 
     }
 
-    /// <summary>名称循环到第 50 行时已经可读，尚未扫描子外参也没有调用 ReadNames。</summary>
+    /// <summary>名称循环到第 50 行时已可读，子外参尚未进入名称扫描且没有调用 ReadNames。</summary>
     [Fact]
     public void NamesAreVisibleInsideIdentificationLoop()
     {
@@ -264,7 +265,7 @@ public sealed class XrefCatalogTests : IDisposable
         Assert.Contains(",完成,0,0,", XrefNameCsvTests.ReadLive(_journal.SourcesPath));
     }
 
-    /// <summary>同源多链只生成一件清单，晚发现的链在 LOG 中带同一个 GUID 补全。</summary>
+    /// <summary>同源多链在预遍历中确认，名称扫描时只生成一份清单并带同一个 GUID 记录全部链。</summary>
     [Fact]
     public void SharedSourceCsvAndLateChainsUseSameGuid()
     {
@@ -355,13 +356,9 @@ public sealed class XrefCatalogTests : IDisposable
                 return current;
             });
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, journal);
-        if (failure == "write")
-        {
-            // 第 50 行的刷新触发底层写出；表头已成功写出后再注入故障。
-            Database.OnGetObject = (database, id) =>
-            { if (database == main && id == main.BlockTableId) current!.FailWrites = true; };
-        }
-        Assert.Throws<XrefBlockLogException>(() => catalog.Discover());
+        // 名称阶段表头成功写出后再注入故障，关系预遍历不能访问尚未创建的清单。
+        Assert.Throws<XrefBlockLogException>(() => catalog.Discover(scanStarted: (_, _, _) =>
+        { if (failure == "write") current!.FailWrites = true; }));
         Assert.Equal(1, created);
         Assert.Contains(",写入失败,", XrefNameCsvTests.ReadLive(journal.SourcesPath));
         if (current != null) Assert.True(current.Closed);
@@ -557,6 +554,152 @@ public sealed class XrefCatalogTests : IDisposable
         if (failure == "context") Assert.Throws<Pn3DKit.Commands.XrefCheckStoppedException>(() => catalog.ReadDefinition(entry));
         else if (failure == "cancel") Assert.Throws<OperationCanceledException>(() => catalog.ReadDefinition(entry));
         else Assert.Contains("SDK ErrorStatus=FileNotFound", catalog.ReadDefinition(entry).Content.ReadError);
+    }
+
+    /// <summary>先完整发现来源再扫描名称，分母固定、主图优先，多链不重复加载，块表最多两阶段各一次。</summary>
+    [Fact]
+    public void CensusFreezesSourceTotalBeforeFirstNameInventory()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg"); var nested = Source("c.dwg");
+        main.Block("Main"); child.Block("Child"); nested.Block("Nested");
+        main.Reference("B1", null, child.Filename); main.Reference("B2", null, child.Filename);
+        child.Reference("C", null, nested.Filename);
+        var tableReads = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        Database.OnGetObject = (db, id) =>
+        {
+            if (id == db.BlockTableId) tableReads[db.Filename] = tableReads.GetValueOrDefault(db.Filename) + 1;
+        };
+        var found = new List<int>(); var scans = new List<(int Index, int Total, string Name)>();
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(sourceFound: (count, _) =>
+        {
+            found.Add(count); Assert.Empty(Directory.GetFiles(_root, "*__*.csv"));
+        }, scanStarted: (index, total, path) =>
+        {
+            scans.Add((index, total, Path.GetFileName(path)));
+            if (index == 1)
+            {
+                Assert.Equal(3, tableReads.Count);
+                Assert.All(tableReads.Values, value => Assert.Equal(1, value));
+                Assert.Single(Directory.GetFiles(_root, "*__*.csv"));
+            }
+        });
+        Assert.Equal(new[] { 1, 2, 3 }, found);
+        Assert.Equal(new[] { (1, 3, "A.dwg"), (2, 3, "b.dwg"), (3, 3, "c.dwg") }, scans);
+        Assert.All(tableReads.Values, value => Assert.Equal(2, value));
+        Assert.Equal(1, Database.Reads[child.Filename]); Assert.Equal(1, Database.Reads[nested.Filename]);
+        Assert.Equal(0, catalog.RootReads); Assert.Equal(0, catalog.ReadersCreated);
+        var inventory = catalog.ReadNames();
+        Assert.Equal(new[] { 1, 2, 3 }, inventory.Sources.Select(s => s.DwgNo));
+        Assert.Equal(2, inventory.Sources.Single(s => s.DwgNo == 2).Chains.Count);
+        _output.WriteLine("XREF_CENSUS_EVIDENCE=" + System.Text.Json.JsonSerializer.Serialize(new
+        { Sources = scans.Count, Totals = scans.Select(s => s.Total), TableReads = tableReads,
+          DiskLoads = Database.Reads, RootReads = catalog.RootReads, Readers = catalog.ReadersCreated,
+          Evidence = "生产检索源码与 SDK 替身，不是实际 DWG 耗时" }));
+    }
+
+    /// <summary>同路径不同内存状态分别计数，不因同名物理文件合并分母。</summary>
+    [Fact]
+    public void CensusCountsDistinctHostStatesAtSamePath()
+    {
+        var main = Source("A.dwg"); var child = Source("shared.dwg");
+        var other = new Database(false, true) { Filename = child.Filename, Fixture = true };
+        child.Block("First"); other.Block("Second");
+        main.Reference("B1", child, child.Filename); main.Reference("B2", other, child.Filename);
+        var totals = new List<int>();
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(scanStarted: (_, total, _) => totals.Add(total));
+        Assert.Equal(new[] { 3, 3, 3 }, totals); Assert.Empty(Database.Reads);
+        Assert.Equal(3, catalog.ReadNames().Sources.Select(s => s.DwgNo).Distinct().Count());
+    }
+
+    /// <summary>不可读来源单独记录，总数只覆盖已确认数据库，不能宣告范围完整。</summary>
+    [Fact]
+    public void CensusMissingSourceKeepsKnownTotalAndIncompleteScope()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Reference("B", child, child.Filename);
+        main.Reference("Missing", null, Path.Combine(_root, "lost.dwg"));
+        var totals = new List<int>();
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(scanStarted: (_, total, _) => totals.Add(total));
+        Assert.Equal(new[] { 2, 2 }, totals);
+        Assert.False(catalog.ReadNames().ScopeComplete);
+        Assert.Contains("总数仅覆盖已确认来源", XrefNameCsvTests.ReadLive(_journal.LogPath));
+    }
+
+    /// <summary>发现阶段中断不创建名称文件；已发现但未扫描的来源仍可纯内存追溯。</summary>
+    [Fact]
+    public void CensusCancelKeepsRelationsWithoutNameFiles()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg"); main.Reference("B", null, child.Filename);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        Assert.Throws<OperationCanceledException>(() => catalog.Discover(sourceFound: (count, _) =>
+        { if (count == 2) throw new OperationCanceledException("来源发现取消"); }));
+        Assert.Empty(Directory.GetFiles(_root, "*__*.csv"));
+        var inventory = catalog.CaptureNames();
+        Assert.False(inventory.ScopeComplete); Assert.Empty(inventory.Entries);
+        Assert.Equal(2, inventory.Sources.Count); Assert.All(inventory.Sources, s => Assert.Equal(0, s.DwgNo));
+        _journal.Complete(new(inventory, true, "来源发现取消"), Pn3DKit.Utils.XrefBlockNames.Summarize(inventory));
+        Assert.Contains("未扫描来源", XrefNameCsvTests.ReadLive(_journal.LogPath));
+    }
+
+    /// <summary>名称阶段中断保留已确认行及固定总数，未扫描来源不冒充空图纸。</summary>
+    [Fact]
+    public void NamingCancelPreservesFixedTotalAndUnscannedSources()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Block("First"); child.Block("Later"); main.Reference("B", child, child.Filename);
+        var totals = new List<int>();
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        Assert.Throws<OperationCanceledException>(() => catalog.Discover(
+            progress: (_, source) => { if (source == main.Filename) throw new OperationCanceledException(); },
+            scanStarted: (_, total, _) => totals.Add(total)));
+        Assert.Equal(new[] { 2 }, totals); Assert.Empty(Directory.GetFiles(_root, "b__*.csv"));
+        var inventory = catalog.CaptureNames();
+        Assert.Single(inventory.Entries); Assert.False(inventory.ScopeComplete);
+        Assert.Equal(0, inventory.Sources.Single(s => s.Drawing == child.Filename).DwgNo);
+    }
+
+    /// <summary>冻结后外参新增、删除、目标状态或覆盖规则变化均停止，不扩大总数继续扫描。</summary>
+    [Theory]
+    [InlineData("add")]
+    [InlineData("remove")]
+    [InlineData("retarget")]
+    [InlineData("overlay")]
+    public void ReferenceChangeBetweenStagesStopsInsteadOfChangingTotal(string change)
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg"); var other = Source("c.dwg");
+        main.Reference("B", child, child.Filename);
+        var reference = main.Objects.Values.OfType<BlockTableRecord>().Single(b => b.IsFromExternalReference);
+        var totals = new List<int>();
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        var error = Assert.Throws<Pn3DKit.Commands.XrefCheckStoppedException>(() => catalog.Discover(
+            scanStarted: (_, total, _) =>
+            {
+                totals.Add(total);
+                if (change == "add") main.Reference("C", other, other.Filename);
+                else if (change == "remove") main.Table.Items.Remove(reference.Id);
+                else if (change == "retarget") reference.Loaded = other;
+                else reference.IsFromOverlayReference = true;
+            }));
+        Assert.Contains("外参关系已变化", error.Message); Assert.Equal(new[] { 2 }, totals);
+        Assert.False(catalog.ScopeComplete); Assert.Empty(catalog.CaptureNames().Entries);
+        Assert.Empty(Directory.GetFiles(_root, "b__*.csv"));
+    }
+
+    /// <summary>来源文件在预遍历后变化时在该图名称扫描之前停止，已完成图纸仍保留。</summary>
+    [Fact]
+    public void DiskChangeBetweenStagesStopsBeforeSourceNames()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Block("First"); child.Block("Later"); main.Reference("B", null, child.Filename);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        Assert.Throws<IOException>(() => catalog.Discover(scanStarted: (index, _, _) =>
+        { if (index == 1) File.AppendAllText(child.Filename, "来源变化"); }));
+        Assert.Single(catalog.CaptureNames().Entries);
+        Assert.Empty(Directory.GetFiles(_root, "b__*.csv")); Assert.False(catalog.ScopeComplete);
+        Assert.Equal(1, Database.Reads[child.Filename]);
     }
 
     /// <summary>只清理本测试创建的替身文件和日志。</summary>

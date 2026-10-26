@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.32 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.32
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.33 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.33
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.32 -OutputDirectory artifacts/release/0.1.32
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.33 -OutputDirectory artifacts/release/0.1.33
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源检索代码，不引用或加载 Autodesk。来源检索通过最小只读 SDK 替身验证生命周期和调用范围；名称阶段只读取块表元数据，候选二维内容使用类型化快照和内容读取替身，真实 CAD 的扫描、比较及性能仍待授权复测。
@@ -61,9 +61,15 @@ $sdk = ./build/Get-PlantSdk.ps1
 
 PlantTagCheckAccess.ReadFields 对非自动编号的 N／NN／NNN 字段，将 RetrieveProperty 已读原值传给 FormatToolsUtil.FormatNumerals(formatCharacters, raw)，不再通过片段 Evaluate 获取数字段。TagCheckPolicy.FormatProperty 统一路由并验证结果；非空数字返回空值或格式化抛错时返回字段格式化失败，保留路径、原值、格式和可获得的 SDK 状态。该错误不由可选字段的 KeyNotFound 规则吞掉，不生成缺号期望值；共享检查与两个重建预检入口均沿用此结果。其他格式、配对字段与自动编号原有处理保持；不以本修复重新承诺所有 SDK 求值无副作用。
 
+## 目录提示与外参进度
+
+六个目录入口共用 CadOutputDirectoryPrompt，主线程读取一次 FILEDIA，统一生成关键字／路径提示、窗口标题和容错输出，各用途传入自己的验证器及上下文检查。OutputDirectorySelection 在输入、浏览及验证前后调用 ensureContext，且检查位于路径异常重试之外；数据库／项目失效不作为目录错误重试，不修改 FILEDIA。
+
+XrefBlockProgress 不依赖 Autodesk，按主线程检查点和 TimeProvider 每三秒输出当前阶段，不建立后台 CAD 回调。比较结果先调用既有写入并刷新，再输出符合／不符合／未验证；报告异常不打印完成。Paths 固定先提醒再展示路径，提醒不进入心跳。CSV ResultText 保持匹配／不匹配／未验证，未增加公开命令。
+
 ## 外参块名称统计与候选比较实现
 
-XrefBlockCadCatalog 保留外参图、旁路只读数据库、完整 BlockTableId、命名空间还原、同源多链和同路径不同状态缓存。名称阶段仅读块表元数据，记录内部原名到 ObjectId 的定位索引；GUID 流式清单、dwgNo 和两份三列统计不变。统计先刷新，再按内存中的 Normal.DwgCount > 1 建立候选。
+XrefBlockCadCatalog 先用 IndexReferences 发现附着／覆盖来源并冻结 SourceState 清单，再逐图 IndexNames。关系和名称阶段各枚举一次块表，来源数据库和引用链缓存复用，不重复装载源文件；ReferenceStamp 保存完整对象身份、路径、加载身份和覆盖状态，两阶段之间变化则停止。名称阶段才创建 GUID 清单并分配 dwgNo，表头先于该阶段块表读取，50 行／1 秒写出保持。sourceFound 回调报告已确认来源数，scanStarted 回调在表头刷新后报告序号／固定总数；原 progress 回调仍是累计名称行数。CaptureNames 包含已发现但 DwgNo=0 的未扫描来源，LOG 不将其视为空图纸。
 
 候选通过 ReadDefinition 重新核对来源、文件状态及目标名称／匿名标志，按来源／定义缓存快照；每个实际需要的来源只创建一个 XrefBlockSnapshotReader。无候选时根读取和内容读取器均为零。不恢复使用索引或插入数量查询。比较结束先释放读取器只读事务，再释放本工具数据库；宿主数据库不释放。
 
@@ -84,7 +90,7 @@ XrefBlockComparisonBatch 串行读取候选，归组且报告刷新成功后才�
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.32/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.33/。
 
 ## 当前实现与验收
 
@@ -92,11 +98,11 @@ XrefBlockComparisonBatch 串行读取候选，归组且报告刷新成功后才�
 
 已测试：离线策略、Fake Host 生命周期、默认否、冲突、数据行别名、日志、保存等待及异常收尾；插件通过双配置构建和十条命令元数据校验，实际结果见 Changlog.md 和 validation 日志。
 
-0.1.32 本轮双配置构建零警告、零错误，两配置各 660 项回归通过，其中外参 152 项，较 0.1.31.3 增加 12 项。验证三种结果映射、每块单行、编号去重及数字排序、详细 LOG、取消及未验证、历史文件保全，同时保留名称预筛选、按需内容读取、严格快照和输出故障停止回归。两配置 0.1.32.0／产品 0.1.32／十命令／.NET 8／AMD64／单 DLL、九个 SDK 来源及 Private=false，以及 ZIP 三件载荷和内外 SHA-256 均通过，证据保存到 artifacts/validation/0.1.32/；未加载 Autodesk 运行 CAD，离线通过不替代实际图纸验收。
+0.1.33 双配置构建零警告、零错误；两配置各 686 项回归通过，新增 26 项，其中外参 172 项，定向 191 项通过。覆盖统一目录上下文停止、来源冻结总数、两阶段取消、关系及磁盘变化、逐块报告后输出、阶段心跳、提醒顺序和 CSV 保持；三来源两个阶段各一次块表枚举、旁路文件各一次装载，无额外内容读取。两配置版本／十命令／.NET 8／AMD64／单 DLL、九个 SDK 来源及 Private=false、ZIP 三件载荷和内外 SHA-256 通过。日志 artifacts/validation/0.1.33/；SDK 替身和离线结果不代替实际 CAD 验收，本轮仅本地提交。
 
 0.1.29 已完成的 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
 
-未完成：CAD 实机验收仍待执行。0.1.32 本轮已获提交、普通推送 main／v0.1.32 及正式 Release 授权；完成本机验证后发布并回下载核验资产。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE、外参二维读取与比较，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
+未完成：CAD 实机验收仍待执行；本轮 0.1.33 完成本机验证和候选包后仅本地提交，不推送、不创建 Release。FILEDIA/C 的实际点击、外参扫描和 Esc 响应、实际性能以及位号与特性的真实 SDK 行为须使用授权图纸复测，不自动连接 CAD 操作用户图纸。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 

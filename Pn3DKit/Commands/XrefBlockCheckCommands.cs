@@ -25,6 +25,7 @@ public sealed class XrefBlockCheckCommands
         XrefBlockStatistics? statistics = null;
         IReadOnlyList<XrefBlockCandidate> candidates = [];
         var comparisons = new List<XrefBlockComparisonResult>();
+        var progress = new XrefBlockProgress(Write);
         int rootReads = 0, readers = 0;
         Action retention = () => { };
         bool interrupted = false, issues = true;
@@ -42,40 +43,39 @@ public sealed class XrefBlockCheckCommands
                 try { TagCheckCommands.EnsureDocument(database, identity); }
                 catch (System.Exception ex) { throw new XrefCheckStoppedException(ex.Message, ex); }
             }
-            var heartbeat = System.Diagnostics.Stopwatch.StartNew();
             void Ensure()
             {
                 EnsureDocument(); TagCheckCommands.CheckBreak();
-                if (heartbeat.ElapsedMilliseconds >= 3000)
-                { Write("外参块名称扫描处理中，可按 Esc 中断。"); heartbeat.Restart(); }
+                progress.Pulse();
             }
             retention = EnsureDocument;
             Ensure();
             string suggested = RunPaths.Suggest(RunPaths.Documents(), RunLogKind.XrefBlockCheck, DateTime.Now);
-            string? directory = TagCheckCommands.SelectDirectory(document.Editor, suggested, EnsureDocument,
+            string? directory = CadOutputDirectoryPrompt.Select(document.Editor, suggested, EnsureDocument,
                 XrefBlockJournal.Validate, "外参块名称统计");
             if (directory == null) return;
             Ensure();
             string drawing = string.IsNullOrWhiteSpace(database.Filename) ? document.Name : database.Filename;
             journal = new(directory, drawing, files);
-            Write("日志：" + journal.LogPath + "\n来源索引：" + journal.SourcesPath);
-            Write("正在扫描外参关系及块名称；名称统计落盘后仅比较重复普通块的二维内容。");
+            progress.Paths("日志：" + journal.LogPath, "来源索引：" + journal.SourcesPath);
+            progress.Stage("正在发现外参文件……");
             catalog = new(database, drawing, Ensure, journal);
             var stage = System.Diagnostics.Stopwatch.StartNew();
-            catalog.Discover((count, source) => Write("名称扫描：" + count + "；" + source));
+            catalog.Discover(sourceFound: progress.SourceFound, scanStarted: progress.Scan);
+            progress.Stage("正在核对名称扫描来源状态。");
             inventory = catalog.ReadNames();
-            journal.Notice("名称扫描耗时(ms)：" + stage.Elapsed.TotalMilliseconds.ToString("F1")
+            journal.Notice("来源发现及名称扫描耗时(ms)：" + stage.Elapsed.TotalMilliseconds.ToString("F1")
                 + "；来源数：" + inventory.Sources.Count(s => s.DwgNo > 0)
                 + "；名称条目：" + inventory.Entries.Count);
-            Write("正在按匿名标志汇总块名称及 dwgNo。");
+            progress.Stage("正在按匿名标志汇总块名称及 dwgNo。");
             statistics = XrefBlockNames.Summarize(inventory, Ensure);
             journal.WriteStatistics(inventory, statistics);
             candidates = XrefBlockComparison.Candidates(inventory, statistics);
             Write("重复普通块候选名称组：" + candidates.Count + "；比较报告：" + journal.ComparisonPath);
             stage.Restart();
             XrefBlockComparisonBatch.Run(candidates, catalog.ReadDefinition, () => catalog.ScopeComplete, Ensure,
-                journal.AppendComparison, comparisons,
-                (index, count, name) => Write("比较名称组：" + index + "/" + count + "；" + name));
+                result => progress.Complete(result, journal.AppendComparison), comparisons, progress.Compare);
+            progress.Stage("正在核对比较来源状态。");
             catalog.VerifySources();
             journal.Notice("候选比较耗时(ms)：" + stage.Elapsed.TotalMilliseconds.ToString("F1")
                 + "；实际根读取：" + catalog.RootReads + "；来源内容读取器：" + catalog.ReadersCreated);
@@ -112,7 +112,7 @@ public sealed class XrefBlockCheckCommands
                         if (candidates.Count == 0) candidates = XrefBlockComparison.Candidates(inventory, statistics);
                         foreach (var pending in XrefBlockComparisonBatch.Remaining(candidates, comparisons,
                             stopReason ?? "扫描或比较未完成，未读取此候选。").ToArray())
-                        { journal.AppendComparison(pending); comparisons.Add(pending); }
+                        { progress.Complete(pending, journal.AppendComparison); comparisons.Add(pending); }
                         issues |= comparisons.Any(c => c.HasIssues);
                         journal.Complete(result, statistics, comparisons, rootReads, readers);
                         outputComplete = true;
@@ -130,17 +130,17 @@ public sealed class XrefBlockCheckCommands
                     if (outputComplete && statistics != null)
                         Write("匿名块名称：" + statistics.Anonymous.Count + "；非匿名块名称：" + statistics.Normal.Count);
                     if (result.HasIssues) Write("统计仅含已确认名称，不能代表全部外参范围。");
-                    foreach (var group in comparisons.GroupBy(c => c.ResultText)) Write("比较" + group.Key + "：" + group.Count());
+                    foreach (var group in comparisons.GroupBy(XrefBlockProgress.ResultLabel)) Write("比较" + group.Key + "：" + group.Count());
                     var different = comparisons.Where(c => c.Status == XrefBlockComparisonStatus.Different).ToArray();
                     foreach (var item in different.Take(20))
-                        Write("不匹配块 " + item.Name + "：" + string.Join("；", item.Groups.Select(g => "内容组" + g.Number
+                        Write("不符合块 " + item.Name + "：" + string.Join("；", item.Groups.Select(g => "内容组" + g.Number
                             + " [dwgNo=" + string.Join("/", g.Definitions.Select(d => d.Entry.Source.DwgNo)) + "]"))
                             + (item.Complete ? "" : "；同时存在未完整比较来源"));
-                    if (different.Length > 20) Write("另有 " + (different.Length - 20) + " 个不匹配名称，请查看报告。");
+                    if (different.Length > 20) Write("另有 " + (different.Length - 20) + " 个不符合名称，请查看报告。");
                     Write("二维比较范围外的内容明确标记不完整；报告不模拟最终绑定结果。");
-                    Write("日志：" + journal.LogPath + "\n来源索引：" + journal.SourcesPath
-                        + "\n匿名统计：" + journal.AnonymousPath + "\n非匿名统计：" + journal.NormalPath
-                        + "\n比较报告：" + journal.ComparisonPath);
+                    progress.Paths("日志：" + journal.LogPath, "来源索引：" + journal.SourcesPath,
+                        "匿名统计：" + journal.AnonymousPath, "非匿名统计：" + journal.NormalPath,
+                        "比较报告：" + journal.ComparisonPath);
                 }
                 else if (stopReason != null) Write(stopReason);
             }

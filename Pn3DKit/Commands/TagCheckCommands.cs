@@ -5,7 +5,6 @@ using Autodesk.AutoCAD.Runtime;
 using Pn3DKit.Interop;
 using Pn3DKit.Models;
 using Pn3DKit.Services;
-using Pn3DKit.UI;
 using Pn3DKit.Utils;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
@@ -127,7 +126,9 @@ public sealed class TagCheckCommands
             string[] classes = selected.Select(g => g.ClassName).Distinct().ToArray();
             string documents = RunPaths.Documents();
             string suggested = TagCheckPaths.Suggest(documents, DateTime.Now);
-            output = SelectDirectory(editor, suggested, () => EnsureDocument(database, databaseIdentity));
+            output = CadOutputDirectoryPrompt.Select(editor, suggested,
+                () => { EnsureDocument(database, databaseIdentity); if (!scan.IsCurrent()) throw new InvalidOperationException("当前 Plant 项目已变化，检查已停止。"); },
+                TagCheckPaths.Validate, "位号检查");
             if (output == null) return;
 
             void EnsureContext()
@@ -183,50 +184,6 @@ public sealed class TagCheckCommands
         }
     }
 
-    /// <summary>复用 FILEDIA 分流和系统文件夹选择器，在交互前后核对数据库身份。</summary>
-    /// <param name="editor">本批次开始时取得的命令行编辑器。</param>
-    /// <param name="suggested">回车采用的建议日志目录。</param>
-    /// <param name="ensureDocument">在输入及选择器返回时检查原数据库仍为活动图纸。</param>
-    internal static string? SelectDirectory(Editor editor, string suggested, Action ensureDocument,
-        Func<string, string>? validate = null, string title = "位号检查")
-    {
-        int fileDia = Convert.ToInt32(AcadApp.GetSystemVariable("FILEDIA"));
-        return OutputDirectorySelection.Select(fileDia, suggested,
-            path =>
-            {
-                ensureDocument();
-                string? selected = FolderSelectDialogue.Select(path, AcadApp.MainWindow.Handle, "Pn3DKit — 选择" + title + "日志目录");
-                ensureDocument();
-                return selected;
-            },
-            path =>
-            {
-                ensureDocument();
-                if (fileDia != 0)
-                {
-                    var prompt = new PromptKeywordOptions("\n输出日志目录<" + path + "> 或 [选择..(C)]: ")
-                    { AllowNone = true, AppendKeywordsToMessage = false };
-                    prompt.Keywords.Add("C", "C", "选择..(C)");
-                    var result = editor.GetKeywords(prompt);
-                    ensureDocument();
-                    return result.Status switch
-                    {
-                        PromptStatus.OK => result.StringResult,
-                        PromptStatus.None => "",
-                        _ => null
-                    };
-                }
-                var input = editor.GetString(new PromptStringOptions("\n输出日志目录")
-                { AllowSpaces = true, DefaultValue = path, UseDefaultValue = true });
-                ensureDocument();
-                return input.Status switch
-                {
-                    PromptStatus.OK => input.StringResult,
-                    PromptStatus.None => "",
-                    _ => null
-                };
-            }, message => WriteSafely("\n" + message), validate ?? TagCheckPaths.Validate, "无法使用此日志目录：");
-    }
 
     /// <summary>在进入 Plant API 前检查当前文档及现有导出批次。</summary>
     private static Document? Ready(string command)

@@ -3,7 +3,6 @@ using Autodesk.AutoCAD.Runtime;
 using Pn3DKit.Interop;
 using Pn3DKit.Models;
 using Pn3DKit.Services;
-using Pn3DKit.UI;
 using Pn3DKit.Utils;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
@@ -72,38 +71,14 @@ public sealed class BatchExportCommands
                     || saveResult.StringResult.Equals("Y", StringComparison.OrdinalIgnoreCase);
                 string suggested = ExportPolicy.SuggestDirectory(
                     RunPaths.Documents(), DateTime.Now);
-                int fileDia = Convert.ToInt32(AcadApp.GetSystemVariable("FILEDIA"));
-                string? output = OutputDirectorySelection.Select(fileDia, suggested,
-                    path => FolderSelectDialogue.Select(path, AcadApp.MainWindow.Handle),
-                    path =>
-                    {
-                        if (fileDia != 0)
-                        {
-                            var choice = new PromptKeywordOptions("\n输出导出目录<" + path + "> 或 [选择..(C)]: ")
-                            {
-                                AllowNone = true, AppendKeywordsToMessage = false
-                            };
-                            choice.Keywords.Add("C", "C", "选择..(C)");
-                            var choiceResult = editor.GetKeywords(choice);
-                            return choiceResult.Status switch
-                            {
-                                PromptStatus.OK => choiceResult.StringResult,
-                                PromptStatus.None => "",
-                                _ => null
-                            };
-                        }
-                        var prompt = new PromptStringOptions("\n输入导出目录")
-                        {
-                            AllowSpaces = true, DefaultValue = path, UseDefaultValue = true
-                        };
-                        var result = editor.GetString(prompt);
-                        return result.Status switch
-                        {
-                            PromptStatus.OK => result.StringResult,
-                            PromptStatus.None => "",
-                            _ => null
-                        };
-                    }, message => editor.WriteMessage("\n" + message));
+                var directoryIdentity = document.Database.BlockTableId;
+                void EnsureDirectoryContext()
+                {
+                    TagCheckCommands.EnsureDocument(document.Database, directoryIdentity);
+                    host.EnsureProject();
+                }
+                string? output = CadOutputDirectoryPrompt.Select(editor, suggested, EnsureDirectoryContext,
+                    ExportPolicy.ValidateOutputDirectory, "导出", logDirectory: false);
                 if (output == null) return null;
                 editor.WriteMessage("\n所选输出目录：" + output);
                 var versionPrompt = new PromptKeywordOptions(DwgVersionSelection.Message)
