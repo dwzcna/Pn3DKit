@@ -1,11 +1,41 @@
 namespace Pn3DKit.Models;
 
-/// <summary>块定义比较的五种状态；完整性独立于已确认冲突。</summary>
-public enum XrefBlockStatus { Consistent, Conflict, Unique, Incomplete, ReadError }
+/// <summary>内容比较状态与匿名未比较提示；完整性独立于已确认冲突。</summary>
+public enum XrefBlockStatus { Consistent, Conflict, Unique, Incomplete, ReadError, AnonymousSkipped }
 
 /// <summary>来源数据库及其全部引用链；Key 仅标识本批来源，不参与内容比较。</summary>
 public sealed record XrefBlockSource(string Key, string Drawing, string DataSource, bool IsHost,
     IReadOnlyList<string> Chains, string? Error = null);
+
+
+/// <summary>只含名称及来源的轻量条目；Key 仅在本批定位真实定义，不代表内容或句柄。</summary>
+public sealed record XrefBlockNameEntry(string Key, string Name, XrefBlockSource Source, bool IsAnonymous);
+
+/// <summary>名称扫描结果与全部来源；尚未读取实体、资源或使用状态。</summary>
+public sealed record XrefBlockInventory(IReadOnlyList<XrefBlockNameEntry> Entries,
+    IReadOnlyList<XrefBlockSource> Sources, bool ScopeComplete);
+
+/// <summary>不同来源中的同名候选；匿名根只报告名称重复，不做内容归组。</summary>
+public sealed record XrefBlockCandidate(string Name, IReadOnlyList<XrefBlockNameEntry> Entries)
+{
+    /// <summary>保守处理任何包含匿名项的候选，不把名称编号冒充定义身份。</summary>
+    public bool IsAnonymous => Entries.Any(x => x.IsAnonymous);
+}
+
+/// <summary>按来源汇总唯一名称及候选数量；不为唯一名称创建逐块报告或假快照。</summary>
+public sealed record XrefBlockSourceSummary(XrefBlockSource Source, int Names, int UniqueNames,
+    int NamedCandidates, int AnonymousCandidates);
+
+/// <summary>已完成名称预筛选；进度以候选名称组计，唯一名称单独汇总。</summary>
+public sealed record XrefBlockSelection(IReadOnlyList<XrefBlockCandidate> Candidates,
+    IReadOnlyList<XrefBlockSourceSummary> Sources, bool ScopeComplete)
+{
+    /// <summary>无需独立读取内容的唯一名称条目数，不包含其作为父块依赖时的读取。</summary>
+    public int UniqueNames => Sources.Sum(x => x.UniqueNames);
+}
+
+/// <summary>本批定义请求和阶段计时；不把宿主替身的耗时作为真实 CAD 性能。</summary>
+public sealed record XrefBlockBatchMetrics(int DefinitionRequests, TimeSpan Reading, TimeSpan Comparing);
 
 /// <summary>外参关系，覆盖边界不属于读取失败；循环及错误须说明原因。</summary>
 public sealed record XrefBlockRelation(string Parent, string Alias, string Drawing, string Chain,
@@ -40,7 +70,7 @@ public sealed record XrefBlockGroup(string Number, IReadOnlyList<XrefBlockDefini
 /// <summary>同名定义的内容分组、差异和合并风险；已知冲突与未完整比较可以同时存在。</summary>
 public sealed record XrefBlockResult(string Name, XrefBlockStatus Status, bool Complete,
     IReadOnlyList<XrefBlockGroup> Groups, IReadOnlyList<string> Differences,
-    IReadOnlyList<string> Issues, string Risk)
+    IReadOnlyList<string> Issues, string Risk, IReadOnlyList<XrefBlockNameEntry>? Uncompared = null)
 {
     /// <summary>报告使用的明确中文状态。</summary>
     public string StatusText => Status switch
@@ -49,15 +79,24 @@ public sealed record XrefBlockResult(string Name, XrefBlockStatus Status, bool C
         XrefBlockStatus.Conflict => "冲突",
         XrefBlockStatus.Unique => "无同名定义，无需比较",
         XrefBlockStatus.ReadError => "读取错误",
+        XrefBlockStatus.AnonymousSkipped => "匿名块同名，未比较",
         _ => "无法完整比较"
     };
 }
 
 /// <summary>记录本批结束状态，避免把取消或未知来源当作检查正常。</summary>
 public sealed record XrefBlockBatchResult(IReadOnlyList<XrefBlockResult> Results, bool ScopeComplete,
-    bool Interrupted, string? StopReason, int? Total = null)
+    bool Interrupted, string? StopReason, int? Total = null, XrefBlockSelection? Selection = null,
+    XrefBlockBatchMetrics? Metrics = null)
 {
     /// <summary>冲突、不完整、错误或中断时默认保留报告。</summary>
     public bool HasIssues => !ScopeComplete || Interrupted || StopReason != null || Total.HasValue && Results.Count != Total.Value
-        || Results.Any(x => !x.Complete || x.Status is XrefBlockStatus.Conflict or XrefBlockStatus.Incomplete or XrefBlockStatus.ReadError);
+        || Results.Any(x => !x.Complete || x.Status is XrefBlockStatus.Conflict or XrefBlockStatus.Incomplete
+            or XrefBlockStatus.ReadError or XrefBlockStatus.AnonymousSkipped);
+
+    /// <summary>所有候选已处理，仅匿名项按规则未比较；不与读取失败或中断混同。</summary>
+    public bool CompletedWithAnonymousHints => ScopeComplete && !Interrupted && StopReason == null
+        && Total.HasValue && Results.Count == Total.Value
+        && Results.Any(x => x.Status == XrefBlockStatus.AnonymousSkipped)
+        && Results.All(x => x.Complete || x.Status == XrefBlockStatus.AnonymousSkipped);
 }

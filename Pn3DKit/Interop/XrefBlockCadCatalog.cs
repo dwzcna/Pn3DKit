@@ -21,7 +21,11 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         internal bool Host { get; } = host;
         internal HashSet<string> Chains { get; } = new(StringComparer.Ordinal);
         internal HashSet<string> Prefixes { get; } = new(StringComparer.OrdinalIgnoreCase);
-        internal List<(ObjectId Id, string Name)> Blocks { get; } = [];
+        internal List<(ObjectId Id, string Name, bool Anonymous)> Blocks { get; } = [];
+        internal List<ObjectId> Spaces { get; } = [];
+        internal Dictionary<ObjectId, XrefBlockDefinition> Definitions { get; } = [];
+        internal XrefBlockSnapshotReader? Reader { get; set; }
+        internal bool UsageIndexed { get; set; }
         internal List<(ObjectId Id, string Alias, string Path, bool Overlay, Database? Loaded, string Status)> References { get; } = [];
         internal HashSet<ObjectId> Used { get; } = [];
         internal bool Indexed { get; set; }
@@ -40,6 +44,15 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     private readonly List<Database> _owned = [];
     private readonly List<XrefBlockSource> _failures = [];
     private readonly SourceState _host;
+    private readonly Dictionary<string, (SourceState Source, ObjectId Id, string Name, bool Anonymous)> _names = new(StringComparer.Ordinal);
+    private Action<int, string>? _nameProgress;
+    private int _nameCount;
+    /// <summary>实际根快照读取次数，不含只列名称或匿名提示。</summary>
+    internal int RootReads { get; private set; }
+    /// <summary>按需创建的来源读取器数。</summary>
+    internal int ReadersCreated { get; private set; }
+    /// <summary>已建立可达使用索引的来源数。</summary>
+    internal int UsageIndexes => _sources.Values.Count(x => x.UsageIndexed);
     /// <summary>未知来源、循环及索引失败均使整体范围不完整。</summary>
     internal bool ScopeComplete { get; private set; } = true;
 
@@ -97,14 +110,15 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         ? "SDK ErrorStatus=" + cad.ErrorStatus + "：" + cad.Message : ex.GetType().Name + "：" + ex.Message;
 
     /// <summary>建立全部引用链后再固定来源清单，命名定义包括未插入块。</summary>
-    internal void Discover()
+    internal void Discover(Action<int, string>? progress = null)
     {
+        _nameProgress = progress;
         Visit(_host, _host.Drawing, 0, []);
         foreach (var source in _sources.Values) _journal.Source(source.Snapshot);
         foreach (var failure in _failures) _journal.Source(failure);
     }
 
-    /// <summary>每个数据库只建立一次块表、直接外参和可达使用索引。</summary>
+    /// <summary>每个数据库只建立一次名称及外参关系清单，不枚举块实体。</summary>
     private void Index(SourceState source)
     {
         if (source.Indexed) return;
@@ -112,7 +126,7 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         _ensure();
         using var transaction = source.Database.TransactionManager.StartOpenCloseTransaction();
         var table = (BlockTable)transaction.GetObject(source.Database.BlockTableId, OpenMode.ForRead);
-        var spaces = new List<ObjectId>();
+        var spaces = source.Spaces;
         var records = new List<(ObjectId Id, BlockTableRecord Block)>();
         foreach (ObjectId id in table)
         {
@@ -155,10 +169,24 @@ internal sealed class XrefBlockCadCatalog : IDisposable
                 Incomplete(source.Drawing + "：无法可靠确认原始命名空间：" + block.Name);
                 continue;
             }
-            if (!block.IsAnonymous) source.Blocks.Add((id, original));
+            source.Blocks.Add((id, original, block.IsAnonymous));
+            if (++_nameCount % 50 == 0) _nameProgress?.Invoke(_nameCount, source.Drawing);
         }
-        var pending = new Stack<ObjectId>(spaces);
+        _nameProgress?.Invoke(_nameCount, source.Drawing);
+        _journal.Notice("来源名称扫描完成：" + source.Key + " | " + source.Drawing
+            + " | 名称 " + source.Blocks.Count + "；其中匿名 " + source.Blocks.Count(x => x.Anonymous)
+            + "；尚未读取定义内容或统计使用状态。");
+    }
+
+    /// <summary>仅为需要深入比较的来源建立可达使用索引；名称扫描不枚举实体。</summary>
+    private void IndexUsage(SourceState source)
+    {
+        if (source.UsageIndexed) return;
+        _ensure();
+        using var transaction = source.Database.TransactionManager.StartOpenCloseTransaction();
+        var pending = new Stack<ObjectId>(source.Spaces);
         var visited = new HashSet<ObjectId>();
+        var used = new HashSet<ObjectId>();
         while (pending.Count != 0)
         {
             _ensure();
@@ -170,12 +198,14 @@ internal sealed class XrefBlockCadCatalog : IDisposable
                 _ensure();
                 if (transaction.GetObject(entityId, OpenMode.ForRead) is not BlockReference reference) continue;
                 ObjectId target = reference.BlockTableRecord;
-                source.Used.Add(target);
-                if (reference.IsDynamicBlock) source.Used.Add(reference.DynamicBlockTableRecord);
+                used.Add(target);
+                if (reference.IsDynamicBlock) used.Add(reference.DynamicBlockTableRecord);
                 var child = (BlockTableRecord)transaction.GetObject(target, OpenMode.ForRead);
                 if (!child.IsFromExternalReference) pending.Push(target);
             }
         }
+        source.Used.UnionWith(used);
+        source.UsageIndexed = true;
     }
 
     /// <summary>遍历引用链而不是全局剪枝，保留共享文件的每条到达路径。</summary>
@@ -275,65 +305,123 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         return file.Length + "/" + file.LastWriteTimeUtc.Ticks;
     }
 
-    /// <summary>依来源串行读取定义；每条清单立即记录，取消不丢失已扫描记录。</summary>
-    internal IReadOnlyList<XrefBlockDefinition> ReadDefinitions(Action<int, string> progress)
+    /// <summary>固定轻量名称身份和最终引用链，不构造快照读取器或统计使用状态。</summary>
+    internal XrefBlockInventory ReadNames()
     {
-        var result = new List<XrefBlockDefinition>();
-        int count = 0;
+        VerifySources();
+        var entries = new List<XrefBlockNameEntry>();
+        var sources = _sources.Values.Select(s => s.Snapshot).Concat(_failures).ToArray();
+        foreach (var source in _sources.Values)
+        {
+            if (source.Error != null) continue;
+            var snapshot = source.Snapshot;
+            for (int index = 0; index < source.Blocks.Count; index++)
+            {
+                _ensure();
+                var (id, name, anonymous) = source.Blocks[index];
+                string key = source.Key + "/" + index;
+                var entry = new XrefBlockNameEntry(key, name, snapshot, anonymous);
+                entries.Add(entry);
+                _names[key] = (source, id, name, anonymous);
+            }
+        }
+        return new(entries, sources, ScopeComplete);
+    }
+
+    /// <summary>每个命名候选按完整身份惰性读取；保留父块内部所有必要的匿名及唯一名依赖。</summary>
+    internal XrefBlockDefinition ReadDefinition(XrefBlockNameEntry entry)
+    {
+        _ensure();
+        if (!_names.TryGetValue(entry.Key, out var target) || target.Source.Key != entry.Source.Key
+            || target.Name != entry.Name || target.Anonymous != entry.IsAnonymous)
+            throw new InvalidOperationException("块名称条目已失效或不属于本次清单。");
+        if (entry.IsAnonymous) throw new InvalidOperationException("匿名根定义按规则不进行独立内容比较。");
+        var source = target.Source;
+        VerifySource(source);
+        if (!target.Id.IsValid || target.Id.IsErased)
+            throw new InvalidOperationException("候选块定义已失效或删除：" + entry.Name);
+        if (source.Definitions.TryGetValue(target.Id, out var cached)) return cached;
+        int references = 0;
+        BlockContentSnapshot content;
+        try
+        {
+            IndexUsage(source);
+            using (var transaction = source.Database.TransactionManager.StartOpenCloseTransaction())
+            {
+                var block = (BlockTableRecord)transaction.GetObject(target.Id, OpenMode.ForRead);
+                if (block.IsAnonymous || XrefBlockComparison.RemoveSourceNamespace(block.Name, source.Prefixes) != entry.Name)
+                    throw new InvalidOperationException("命名块定义状态已变化。");
+                references = block.GetBlockReferenceIds(true, false).Count;
+                if (block.IsDynamicBlock)
+                    foreach (ObjectId anonymous in block.GetAnonymousBlockIds())
+                    {
+                        _ensure();
+                        references += ((BlockTableRecord)transaction.GetObject(anonymous, OpenMode.ForRead))
+                            .GetBlockReferenceIds(true, false).Count;
+                    }
+            }
+            if (source.Reader == null)
+            {
+                source.Reader = new(source.Database, _ensure, source.Prefixes.ToArray());
+                ReadersCreated++;
+            }
+            RootReads++;
+            content = source.Reader.Read(target.Id);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Pn3DKit.Commands.XrefCheckStoppedException) { throw; }
+        catch (CadException ex) when (ex.ErrorStatus == ErrorStatus.UserBreak)
+        { throw new OperationCanceledException("用户取消。", ex); }
+        catch (System.Exception ex) { content = new("root", new Dictionary<string, BlockContentNode>(), [], Detail(ex)); }
+        VerifySource(source);
+        var result = new XrefBlockDefinition(entry.Name, entry.Source, content, references, source.Used.Contains(target.Id));
+        source.Definitions.Add(target.Id, result);
+        return result;
+    }
+
+    /// <summary>候选处理结束再次确认所有来源；名称唯一或匿名跳过也不能掩盖磁盘变化。</summary>
+    internal void VerifySources()
+    {
         foreach (var source in _sources.Values)
         {
             _ensure();
-            if (source.Error != null) continue;
-            int sourceStart = result.Count;
-            using var reader = new XrefBlockSnapshotReader(source.Database, _ensure, source.Prefixes.ToArray());
-            foreach (var (id, name) in source.Blocks)
-            {
-                _ensure();
-                int references = 0;
-                BlockContentSnapshot content;
-                try
-                {
-                    using var transaction = source.Database.TransactionManager.StartOpenCloseTransaction();
-                    var block = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
-                    references = block.GetBlockReferenceIds(true, false).Count;
-                    if (block.IsDynamicBlock)
-                        foreach (ObjectId anonymous in block.GetAnonymousBlockIds())
-                            references += ((BlockTableRecord)transaction.GetObject(anonymous, OpenMode.ForRead))
-                                .GetBlockReferenceIds(true, false).Count;
-                    content = reader.Read(id);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Pn3DKit.Commands.XrefCheckStoppedException) { throw; }
-                catch (CadException ex) when (ex.ErrorStatus == ErrorStatus.UserBreak) { throw new OperationCanceledException("用户取消。", ex); }
-                catch (System.Exception ex) { content = new("root", new Dictionary<string, BlockContentNode>(), [], Detail(ex)); }
-                var definition = new XrefBlockDefinition(name, source.Snapshot, content, references, source.Used.Contains(id));
-                result.Add(definition);
-                _journal.Notice("定义清单：" + source.Drawing + " | " + name + " | " + definition.Usage
-                    + (content.Complete ? "" : " | 无法完整比较：" + string.Join("；", content.Issues.Append(content.ReadError ?? ""))));
-                if (++count % 50 == 0) progress(count, source.Drawing);
-            }
-            if (source.DiskStamp != null)
-            {
-                string? changed = null;
-                try { if (FileStamp(source.Drawing) != source.DiskStamp) changed = "读取期间源文件已变化：" + source.Drawing; }
-                catch (System.Exception ex) { changed = "无法确认源文件状态：" + Detail(ex); }
-                if (changed != null)
-                {
-                    Incomplete(changed);
-                    for (int i = sourceStart; i < result.Count; i++)
-                        result[i] = result[i] with { Content = result[i].Content with
-                            { Issues = result[i].Content.Issues.Append(changed).ToArray() } };
-                }
-            }
+            if (source.Error == null) VerifySource(source);
         }
-        progress(count, "读取完成");
-        return result;
+    }
+
+    /// <summary>旁路文件变化时停止并保留报告；先前结果仅反映读取时状态，不冒充当前数据。</summary>
+    private void VerifySource(SourceState source)
+    {
+        _ensure();
+        string? problem = null;
+        try
+        {
+            if (source.Database.IsDisposed || !source.Identity.IsValid || source.Identity.IsErased
+                || source.Database.BlockTableId != source.Identity)
+                problem = "来源数据库已关闭或身份变化：" + source.Drawing;
+            else if (source.DiskStamp != null && FileStamp(source.Drawing) != source.DiskStamp)
+                problem = "读取期间源文件已变化：" + source.Drawing;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Pn3DKit.Commands.XrefCheckStoppedException) { throw; }
+        catch (CadException ex) when (ex.ErrorStatus == ErrorStatus.UserBreak)
+        { throw new OperationCanceledException("用户取消。", ex); }
+        catch (System.Exception ex) { problem = "无法确认来源状态：" + source.Drawing + "；" + Detail(ex); }
+        if (problem == null) return;
+        Incomplete(problem + "；已完成报告仅反映读取时状态，请重新检查。");
+        throw new IOException(problem);
     }
 
     /// <summary>从未释放宿主拥有的数据库；失败时仍尝试释放其余旁路数据库。</summary>
     public void Dispose()
     {
         var errors = new List<string>();
+        foreach (var source in _sources.Values)
+        {
+            try { source.Reader?.Dispose(); }
+            catch (System.Exception ex) { errors.Add(Detail(ex)); }
+            source.Reader = null;
+        }
         foreach (var database in _owned)
             try { database.Dispose(); }
             catch (System.Exception ex) { errors.Add(Detail(ex)); }

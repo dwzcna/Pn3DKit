@@ -26,6 +26,8 @@ public sealed class XrefBlockCheckCommands
         bool scopeComplete = false, interrupted = false;
         string? stopReason = null;
         int? total = null;
+        XrefBlockSelection? selection = null;
+        XrefBlockBatchMetrics? metrics = null;
         try
         {
             var document = AcadApp.DocumentManager.MdiActiveDocument;
@@ -56,20 +58,45 @@ public sealed class XrefBlockCheckCommands
             string drawing = string.IsNullOrWhiteSpace(database.Filename) ? document.Name : database.Filename;
             journal = new(directory, drawing, files);
             Write("日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
-            Write("正在建立外参关系及命名块清单；本命令不绑定、不重载、不保存图纸。");
+            Write("正在建立外参关系及块名称清单；只深入比较跨来源同名的命名块，不绑定、不重载、不保存。");
             using (var catalog = new XrefBlockCadCatalog(database, drawing, Ensure, journal))
             {
-                catalog.Discover();
+                var stage = System.Diagnostics.Stopwatch.StartNew();
+                catalog.Discover((count, source) => Write("名称扫描：" + count + "；" + source));
+                var inventory = catalog.ReadNames();
+                scopeComplete = inventory.ScopeComplete;
+                journal.Notice("名称扫描耗时(ms)：" + stage.Elapsed.TotalMilliseconds.ToString("F1")
+                    + "；来源数：" + inventory.Sources.Count + "；名称条目：" + inventory.Entries.Count);
                 Ensure();
-                var definitions = catalog.ReadDefinitions((count, source) =>
-                    Write("读取定义：" + count + "；" + source));
-                Ensure();
-                scopeComplete = catalog.ScopeComplete;
-                var batch = XrefBlockBatch.Compare(definitions, scopeComplete, Ensure, journal.Append,
-                    (done, total) => Write("同名块比较进度：" + done + "/" + total));
+                stage.Restart();
+                selection = XrefBlockBatch.Select(inventory, Ensure);
+                total = selection.Candidates.Count;
+                journal.Selection(selection);
+                foreach (var source in selection.Sources)
+                {
+                    Ensure();
+                    Write(source.Source.Drawing + "：名称 " + source.Names + "；"
+                        + (scopeComplete ? "无需比较 " : "已读范围内未发现同名（范围不完整） ")
+                        + source.UniqueNames + "；同名命名候选 " + source.NamedCandidates
+                        + "；匿名提示 " + source.AnonymousCandidates);
+                }
+                journal.Notice("名称筛选及汇总耗时(ms)：" + stage.Elapsed.TotalMilliseconds.ToString("F1"));
+                Write("候选名称组：" + total + "；唯一名称跳过：" + selection.UniqueNames);
+                int requests = 0;
+                var batch = XrefBlockBatch.Compare(selection, entry =>
+                    {
+                        if (requests++ % 50 == 0) Write("读取同名命名块：" + entry.Name + "；" + entry.Source.Drawing);
+                        return catalog.ReadDefinition(entry);
+                    }, () => catalog.ScopeComplete, Ensure, journal.Append,
+                    (done, count) => Write("候选名称组处理进度：" + done + "/" + count));
                 results.AddRange(batch.Results);
+                metrics = batch.Metrics;
                 interrupted = batch.Interrupted; stopReason = batch.StopReason;
-                scopeComplete = batch.ScopeComplete; total = batch.Total;
+                scopeComplete = batch.ScopeComplete;
+                try { if (stopReason == null) catalog.VerifySources(); }
+                finally { scopeComplete = scopeComplete && catalog.ScopeComplete; }
+                journal.Notice("实际根快照读取：" + catalog.RootReads + "；来源读取器：" + catalog.ReadersCreated
+                    + "；使用索引来源：" + catalog.UsageIndexes);
             }
             EnsureDocument();
         }
@@ -79,7 +106,7 @@ public sealed class XrefBlockCheckCommands
         {
             try
             {
-                var batch = new XrefBlockBatchResult(results, scopeComplete, interrupted, stopReason, total);
+                var batch = new XrefBlockBatchResult(results, scopeComplete, interrupted, stopReason, total, selection, metrics);
                 issues = batch.HasIssues;
                 if (journal != null)
                 {
@@ -98,11 +125,19 @@ public sealed class XrefBlockCheckCommands
                             + (item.Complete ? "" : "；同时存在无法完整比较的来源"));
                     if (conflicts.Length > 20) Write("另有 " + (conflicts.Length - 20) + " 个冲突块，请查看完整报告。");
                     Write(interrupted ? "外参块检查已中断。" : stopReason != null ? "外参块检查已停止。"
+                        : batch.CompletedWithAnonymousHints ? "外参块检查完成；存在匿名同名未比较项。"
                         : !scopeComplete || results.Any(x => !x.Complete) ? "外参块检查不完整，请查看具体原因。"
                         : "外参块检查完成。");
                     if (stopReason != null) Write("停止原因：" + stopReason);
-                    Write("已完成块名：" + results.Count + "；未完成："
+                    Write("已完成候选名称组：" + results.Count + "；未完成："
                         + (total.HasValue ? Math.Max(0, total.Value - results.Count).ToString() : "清单未完成，未知"));
+                    if (selection != null)
+                        Write((scopeComplete ? "无需比较的唯一名称：" : "已读范围内未发现同名（范围不完整）：") + selection.UniqueNames);
+                    var anonymous = results.Where(x => x.Status == XrefBlockStatus.AnonymousSkipped).ToArray();
+                    foreach (var item in anonymous.Take(20))
+                        Write("匿名块同名，未比较 " + item.Name + "："
+                            + string.Join("、", (item.Uncompared ?? []).Select(x => x.Source.Drawing).Distinct()));
+                    if (anonymous.Length > 20) Write("另有 " + (anonymous.Length - 20) + " 个匿名同名提示，请查看报告。");
                     Write("报告指出定义差异与合并风险，不承诺模拟 Bind → Insert 的最终结果。");
                     Write("日志：" + journal.LogPath + "\nCSV：" + journal.CsvPath);
                 }

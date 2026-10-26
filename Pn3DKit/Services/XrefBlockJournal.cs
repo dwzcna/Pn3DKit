@@ -74,9 +74,43 @@ public sealed class XrefBlockJournal : IDisposable
     /// <summary>读取阶段的具体警告立即落盘，不等待全部比较结束。</summary>
     public void Notice(string message) { _log.WriteLine(message); Flush(); }
 
-    /// <summary>每个完整内容组及未知来源均保留引用链，不重复输出所有两两比较。</summary>
+    /// <summary>唯一名称仅按来源汇总，不为其生成 CSV 明细或逐块刷盘。</summary>
+    public void Selection(XrefBlockSelection selection)
+    {
+        string skipped = selection.ScopeComplete ? "无需比较" : "已读范围内未发现同名（范围不完整）";
+        foreach (var source in selection.Sources)
+        {
+            _log.WriteLine("名称预筛选：" + source.Source.Key + " | " + source.Source.Drawing
+                + " | 名称 " + source.Names + "；" + skipped + " " + source.UniqueNames
+                + "；同名命名候选 " + source.NamedCandidates + "；同名匿名提示 " + source.AnonymousCandidates);
+            Flush();
+        }
+        _log.WriteLine("候选名称组：" + selection.Candidates.Count + "；唯一名称跳过：" + selection.UniqueNames
+            + "；唯一名称不独立读取内容，CSV 仅保留同名候选、匿名提示及读取错误。");
+        Flush();
+    }
+
+    /// <summary>每个完整内容组及未知来源均保留引用链；匿名提示没有内容分组。</summary>
     public void Append(XrefBlockResult result)
     {
+        if (result.Status == XrefBlockStatus.AnonymousSkipped)
+        {
+            _log.WriteLine("块 " + result.Name + "：" + result.StatusText + "；按规则未读取独立根定义，不判定内容冲突。");
+            string reason = string.Join("\n", result.Differences.Concat(result.Issues).Append(result.Risk).Where(s => s.Length != 0));
+            foreach (var entry in result.Uncompared ?? [])
+            {
+                _log.WriteLine("  " + entry.Source.Drawing + " | 使用情况未统计");
+                foreach (string chain in entry.Source.Chains.DefaultIfEmpty(""))
+                {
+                    _log.WriteLine("    " + chain);
+                    Csv(result.Name, result.StatusText, "", entry.Source.Drawing, chain, "未统计",
+                        "数据来源：" + entry.Source.DataSource + "；来源标识：" + entry.Source.Key + "；" + reason);
+                }
+            }
+            if (reason.Length != 0) _log.WriteLine(reason);
+            Flush();
+            return;
+        }
         _log.WriteLine($"块 {result.Name}：{result.StatusText}；完整性：{(result.Complete ? "完整" : "无法完整比较")}；已确认 {result.Groups.Count(g => !g.Number.StartsWith("未完整", StringComparison.Ordinal))} 种定义");
         string detail = string.Join("\n", result.Differences.Concat(result.Issues).Append(result.Risk).Where(s => s.Length != 0));
         foreach (var group in result.Groups)
@@ -103,11 +137,19 @@ public sealed class XrefBlockJournal : IDisposable
     {
         _log.WriteLine("结束时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
         _log.WriteLine("批次状态：" + (result.Interrupted ? "已中断" : result.StopReason != null ? "已停止"
+            : result.CompletedWithAnonymousHints ? "已完成（含匿名同名未比较项）"
             : result.ScopeComplete && result.Results.All(x => x.Complete) ? "已完成" : "检查不完整"));
         if (result.StopReason != null) _log.WriteLine("停止原因：" + result.StopReason);
-        _log.WriteLine("总块名：" + (result.Total?.ToString() ?? "清单未完成，未知")
+        _log.WriteLine("候选名称组：" + (result.Total?.ToString() ?? "清单未完成，未知")
             + "；已完成：" + result.Results.Count + "；未完成："
             + (result.Total.HasValue ? Math.Max(0, result.Total.Value - result.Results.Count).ToString() : "未知"));
+        if (result.Selection != null)
+            _log.WriteLine((result.ScopeComplete ? "无需比较的唯一名称：" : "已读范围内未发现同名（范围不完整）：")
+                + result.Selection.UniqueNames);
+        if (result.Metrics != null)
+            _log.WriteLine("候选定义请求：" + result.Metrics.DefinitionRequests
+                + "；内容读取耗时(ms)：" + result.Metrics.Reading.TotalMilliseconds.ToString("F1")
+                + "；内容比较耗时(ms)：" + result.Metrics.Comparing.TotalMilliseconds.ToString("F1"));
         foreach (var group in result.Results.GroupBy(x => x.StatusText)) _log.WriteLine(group.Key + "：" + group.Count());
         Flush();
     }

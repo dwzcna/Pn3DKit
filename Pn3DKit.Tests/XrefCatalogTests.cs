@@ -1,5 +1,7 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Pn3DKit.Interop;
+using Pn3DKit.Models;
+using Xunit.Abstractions;
 using Pn3DKit.Services;
 
 namespace Pn3DKit.Tests;
@@ -10,10 +12,15 @@ public sealed class XrefCatalogTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "Pn3DKit.XrefCatalog", Guid.NewGuid().ToString("N"));
     private readonly RunLogFiles _files = new();
     private readonly XrefBlockJournal _journal;
-    public XrefCatalogTests()
+    private readonly ITestOutputHelper _output;
+    /// <summary>重置本类使用的只读 SDK 替身，并准备独立报告目录。</summary>
+    public XrefCatalogTests(ITestOutputHelper output)
     {
+        _output = output;
         Database.Files.Clear(); Database.Reads.Clear(); Database.Failures.Clear(); Database.Created.Clear(); Database.ReadModes.Clear();
         XrefBlockSnapshotReader.OnRead = null; XrefBlockSnapshotReader.NamespaceReads.Clear();
+        XrefBlockSnapshotReader.RootsRead.Clear(); XrefBlockSnapshotReader.CreatedCount = 0;
+        XrefBlockSnapshotReader.DisposedCount = 0; XrefBlockSnapshotReader.CreateSnapshot = null;
         _journal = new(_root, "A.dwg", _files);
     }
 
@@ -36,7 +43,7 @@ public sealed class XrefCatalogTests : IDisposable
         main.Reference("B2", null, Path.Combine(_root, ".", "b.dwg"));
         using (var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal))
         {
-            catalog.Discover(); var definitions = catalog.ReadDefinitions((_, _) => { });
+            catalog.Discover(); var definitions = catalog.ReadNames().Entries;
             var item = Assert.Single(definitions);
             Assert.Equal(2, item.Source.Chains.Count);
             Assert.Equal(1, Database.Reads[child.Filename]);
@@ -57,7 +64,7 @@ public sealed class XrefCatalogTests : IDisposable
         main.Reference("B", child, child.Filename);
         main.GraphDatabases.Add(child);
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
-        catalog.Discover(); var item = Assert.Single(catalog.ReadDefinitions((_, _) => { }));
+        catalog.Discover(); var item = Assert.Single(catalog.ReadNames().Entries);
         Assert.Equal("LiveOnly", item.Name);
         Assert.Equal("宿主当前数据", item.Source.DataSource); Assert.Empty(Database.Reads);
     }
@@ -71,7 +78,7 @@ public sealed class XrefCatalogTests : IDisposable
         main.Reference("B1", first, first.Filename); main.Reference("B2", second, second.Filename);
         main.GraphDatabases.AddRange([first, second]);
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
-        catalog.Discover(); var definitions = catalog.ReadDefinitions((_, _) => { });
+        catalog.Discover(); var definitions = catalog.ReadNames().Entries;
         Assert.Equal(2, definitions.Count);
         Assert.Equal(2, definitions.Select(d => d.Source.Key).Distinct().Count());
         Assert.Empty(Database.Reads);
@@ -99,7 +106,7 @@ public sealed class XrefCatalogTests : IDisposable
         child.Reference("D", overlay, overlay.Filename, true);
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
         catalog.Discover();
-        Assert.Equal(new[] { "B", "C" }, catalog.ReadDefinitions((_, _) => { }).Select(d => d.Name).Order());
+        Assert.Equal(new[] { "B", "C" }, catalog.ReadNames().Entries.Select(d => d.Name).Order());
         Assert.True(catalog.ScopeComplete); Assert.Empty(Database.Reads);
     }
 
@@ -112,7 +119,7 @@ public sealed class XrefCatalogTests : IDisposable
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
         catalog.Discover();
         Assert.False(catalog.ScopeComplete);
-        Assert.Single(catalog.ReadDefinitions((_, _) => { }));
+        Assert.Single(catalog.ReadNames().Entries);
     }
 
     /// <summary>读取失败也缓存，同源不同引用链不重复触发 SDK 读取。</summary>
@@ -138,9 +145,10 @@ public sealed class XrefCatalogTests : IDisposable
         model.Items.Add(main.Add(new BlockReference { BlockTableRecord = used.Id }));
         unused.Items.Add(main.Add(new BlockReference { BlockTableRecord = unused.Id }));
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
-        catalog.Discover(); var definitions = catalog.ReadDefinitions((_, _) => { });
-        Assert.False(definitions.Single(d => d.Name == "Unused").Used);
-        Assert.True(definitions.Single(d => d.Name == "Used").Used);
+        catalog.Discover(); var definitions = catalog.ReadNames().Entries;
+        Assert.All(main.Objects.Values.OfType<BlockTableRecord>(), b => Assert.Equal(0, b.EntityEnumerations));
+        Assert.False(catalog.ReadDefinition(definitions.Single(d => d.Name == "Unused")).Used);
+        Assert.True(catalog.ReadDefinition(definitions.Single(d => d.Name == "Used")).Used);
         Assert.Equal(2, definitions.Count);
     }
 
@@ -156,7 +164,7 @@ public sealed class XrefCatalogTests : IDisposable
         }
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, Ensure, _journal);
         enabled = true;
-        Assert.Throws<Pn3DKit.Commands.XrefCheckStoppedException>(catalog.Discover);
+        Assert.Throws<Pn3DKit.Commands.XrefCheckStoppedException>(() => catalog.Discover());
     }
 
     /// <summary>旁路懒读取期间文件变化，已读快照也必须改为不完整。</summary>
@@ -168,9 +176,10 @@ public sealed class XrefCatalogTests : IDisposable
         XrefBlockSnapshotReader.OnRead = db =>
         { if (db.Filename == child.Filename) File.AppendAllText(child.Filename, "已变化"); };
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
-        catalog.Discover(); var item = Assert.Single(catalog.ReadDefinitions((_, _) => { }));
-        Assert.False(catalog.ScopeComplete); Assert.False(item.Content.Complete);
-        Assert.Contains(item.Content.Issues, s => s.Contains("源文件已变化"));
+        catalog.Discover(); var item = Assert.Single(catalog.ReadNames().Entries);
+        var error = Assert.Throws<IOException>(() => catalog.ReadDefinition(item));
+        Assert.False(catalog.ScopeComplete);
+        Assert.Contains("源文件已变化", error.Message);
     }
 
     /// <summary>SDK UserBreak 作为中断传播，仍释放工具数据库。</summary>
@@ -181,7 +190,7 @@ public sealed class XrefCatalogTests : IDisposable
         Database.Failures[child.Filename] = Autodesk.AutoCAD.Runtime.ErrorStatus.UserBreak;
         main.Reference("B", null, child.Filename);
         using (var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal))
-            Assert.Throws<OperationCanceledException>(catalog.Discover);
+            Assert.Throws<OperationCanceledException>(() => catalog.Discover());
         Assert.All(Database.Created.Where(db => !db.Fixture), db => Assert.True(db.IsDisposed));
     }
 
@@ -194,8 +203,9 @@ public sealed class XrefCatalogTests : IDisposable
         main.Reference("B", child, child.Filename); main.GraphDatabases.Add(child);
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
         catalog.Discover();
-        var item = Assert.Single(catalog.ReadDefinitions((_, _) => { }));
+        var item = Assert.Single(catalog.ReadNames().Entries);
         Assert.Equal("Valve", item.Name);
+        catalog.ReadDefinition(item);
         Assert.Contains(XrefBlockSnapshotReader.NamespaceReads, names => names.Contains("b"));
     }
 
@@ -208,6 +218,183 @@ public sealed class XrefCatalogTests : IDisposable
         child.Reference("Unknown|C", nested, nested.Filename);
         using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
         catalog.Discover(); Assert.False(catalog.ScopeComplete);
+    }
+
+    /// <summary>运行真实目录的名称筛选及按需回调；SDK 内容由显式替身提供。</summary>
+    private XrefBlockBatchResult RunCatalog(XrefBlockCadCatalog catalog, Action<XrefBlockResult>? append = null)
+    {
+        var selection = XrefBlockBatch.Select(catalog.ReadNames(), () => { });
+        _journal.Selection(selection);
+        var result = XrefBlockBatch.Compare(selection, catalog.ReadDefinition, () => catalog.ScopeComplete,
+            () => { }, append ?? _journal.Append, (_, _) => { });
+        if (result.StopReason == null) catalog.VerifySources();
+        return result;
+    }
+
+    /// <summary>上千唯一名称及独立匿名项不创建读取器，不枚举实体；少量命名候选才读取。</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public void LargeCatalogOnlyReadsNamedCandidates(int sharedNames)
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg"); var other = Source("c.dwg");
+        var sources = new[] { main, child, other };
+        for (int index = 0; index < sources.Length; index++)
+        {
+            for (int i = 0; i < 500; i++) sources[index].Block("Unique" + index + "_" + i);
+            for (int i = 0; i < 3; i++) sources[index].Block("*U" + i).IsAnonymous = true;
+            for (int i = 0; i < sharedNames; i++) sources[index].Block("Shared" + i);
+        }
+        main.Reference("B", child, child.Filename); main.Reference("C", other, other.Filename);
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover();
+        var inventory = catalog.ReadNames();
+        double scanningMs = timer.Elapsed.TotalMilliseconds;
+        Assert.All(sources.SelectMany(db => db.Objects.Values.OfType<BlockTableRecord>()), block =>
+        { Assert.Equal(0, block.EntityEnumerations); Assert.Equal(0, block.ReferenceReads); });
+        Assert.Equal(0, XrefBlockSnapshotReader.CreatedCount);
+        var batch = RunCatalog(catalog);
+        Assert.Equal(sharedNames * sources.Length, catalog.RootReads);
+        Assert.Equal(sharedNames * sources.Length, XrefBlockSnapshotReader.RootsRead.Count);
+        Assert.Equal(sharedNames == 0 ? 0 : sources.Length, catalog.ReadersCreated);
+        Assert.Equal(sharedNames == 0 ? 0 : sources.Length, catalog.UsageIndexes);
+        Assert.Equal(1500, batch.Selection!.UniqueNames);
+        Assert.Equal(sharedNames, batch.Results.Count(x => x.Status == XrefBlockStatus.Consistent));
+        Assert.Equal(3, batch.Results.Count(x => x.Status == XrefBlockStatus.AnonymousSkipped));
+        foreach (var block in sources.SelectMany(db => db.Objects.Values.OfType<BlockTableRecord>())
+            .Where(b => b.Name.StartsWith("Unique") || b.IsAnonymous))
+            Assert.Equal(0, block.ReferenceReads);
+        _output.WriteLine("XREF_CATALOG_EVIDENCE=" + System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Sources = sources.Length, Names = inventory.Entries.Count, UniqueNames = batch.Selection.UniqueNames,
+            NamedCandidateGroups = sharedNames, AnonymousGroups = 3, SnapshotRootReads = catalog.RootReads,
+            ReaderCreations = catalog.ReadersCreated, UsageIndexes = catalog.UsageIndexes, ScanningMs = scanningMs,
+            ReadingMs = batch.Metrics!.Reading.TotalMilliseconds, ComparingMs = batch.Metrics.Comparing.TotalMilliseconds,
+            Evidence = "真实目录源码与最小 SDK 替身，非 DWG 或 CAD 实测"
+        }));
+    }
+
+    /// <summary>来源没有命名候选时，不为其建立实体可达索引。</summary>
+    [Fact]
+    public void UniqueOnlySourceDoesNotBuildUsageIndex()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg"); var other = Source("c.dwg");
+        main.Block("Valve"); child.Block("Valve"); other.Block("Unique");
+        main.Reference("B", child, child.Filename); main.Reference("C", other, other.Filename);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(); var result = RunCatalog(catalog);
+        Assert.Single(result.Results); Assert.Equal(2, catalog.RootReads); Assert.Equal(2, catalog.UsageIndexes);
+        Assert.All(other.Objects.Values.OfType<BlockTableRecord>(), b => Assert.Equal(0, b.EntityEnumerations));
+    }
+
+    /// <summary>一个来源复用读取器，同根复用快照和引用统计；结束时先释放读取器。</summary>
+    [Fact]
+    public void LazyReadersAndRootsAreCachedAndDisposed()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Block("Valve"); main.Block("Pump"); child.Block("Valve"); child.Block("Pump");
+        main.Reference("B", child, child.Filename);
+        using (var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal))
+        {
+            catalog.Discover(); var inventory = catalog.ReadNames();
+            Assert.Equal(0, catalog.ReadersCreated);
+            foreach (var entry in inventory.Entries)
+            {
+                var first = catalog.ReadDefinition(entry);
+                Assert.Same(first, catalog.ReadDefinition(entry));
+            }
+            Assert.Equal(4, catalog.RootReads); Assert.Equal(2, catalog.ReadersCreated);
+            Assert.Equal(2, catalog.UsageIndexes);
+            Assert.All(new[] { main, child }.SelectMany(db => db.Objects.Values.OfType<BlockTableRecord>())
+                .Where(b => b.Name is "Valve" or "Pump"), b => Assert.Equal(1, b.ReferenceReads));
+        }
+        Assert.Equal(2, XrefBlockSnapshotReader.DisposedCount);
+        Assert.False(main.IsDisposed); Assert.False(child.IsDisposed);
+    }
+
+    /// <summary>SDK 内容读取失败保留 ErrorStatus 并缓存，不重试同根或误判一致。</summary>
+    [Fact]
+    public void SnapshotFailureKeepsSdkStatus()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Block("Valve"); child.Block("Valve"); main.Reference("B", child, child.Filename);
+        XrefBlockSnapshotReader.OnRead = db =>
+        { if (db.Filename == child.Filename) throw new Autodesk.AutoCAD.Runtime.Exception(Autodesk.AutoCAD.Runtime.ErrorStatus.FileNotFound); };
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(); var result = Assert.Single(RunCatalog(catalog).Results);
+        Assert.Equal(XrefBlockStatus.ReadError, result.Status);
+        Assert.Contains(result.Issues, text => text.Contains("SDK ErrorStatus=FileNotFound"));
+        Assert.Equal(2, catalog.RootReads);
+    }
+
+    /// <summary>来源失效后禁止读取缓存或创建新读取器，保留具体停止原因。</summary>
+    [Fact]
+    public void ClosedSourceStopsBeforeSnapshot()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        child.Block("Valve"); main.Reference("B", child, child.Filename);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(); var entry = Assert.Single(catalog.ReadNames().Entries);
+        child.Dispose();
+        Assert.Contains("数据库已关闭或身份变化", Assert.Throws<IOException>(() => catalog.ReadDefinition(entry)).Message);
+        Assert.False(catalog.ScopeComplete); Assert.Equal(0, catalog.RootReads);
+    }
+
+    /// <summary>仅含唯一名称的磁盘源也要在结束前核对文件状态，不因跳过快照而漏报变化。</summary>
+    [Fact]
+    public void UniqueDiskSourceChangeIsStillDetected()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        child.Block("Unique"); main.Reference("B", null, child.Filename);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(); Assert.Single(catalog.ReadNames().Entries);
+        File.AppendAllText(child.Filename, "源文件变化");
+        Assert.Contains("源文件已变化", Assert.Throws<IOException>(catalog.VerifySources).Message);
+        Assert.False(catalog.ScopeComplete); Assert.Equal(0, catalog.RootReads);
+    }
+
+    /// <summary>完整比较仍使用父块快照中的匿名依赖内容，独立匿名根只输出提示。</summary>
+    [Fact]
+    public void NamedSnapshotRetainsAnonymousDependencyDifferences()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Block("Valve"); child.Block("Valve");
+        main.Block("*U1").IsAnonymous = true; child.Block("*U1").IsAnonymous = true;
+        main.Reference("B", child, child.Filename);
+        XrefBlockSnapshotReader.CreateSnapshot = (db, id) =>
+        {
+            Assert.Equal("Valve", ((BlockTableRecord)db.Objects[id]).Name);
+            return new("root", new Dictionary<string, BlockContentNode>
+            {
+                ["root"] = new("root", "命名父块", new Dictionary<string, string>(), [new("匿名依赖", "child")]),
+                ["child"] = new("child", "匿名内容", new Dictionary<string, string>
+                    { ["半径"] = db.Filename == main.Filename ? "10" : "12" }, [])
+            }, []);
+        };
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(); var result = RunCatalog(catalog);
+        Assert.Contains(result.Results, x => x.Status == XrefBlockStatus.Conflict);
+        Assert.Contains(result.Results, x => x.Status == XrefBlockStatus.AnonymousSkipped);
+        Assert.Equal(2, catalog.RootReads);
+    }
+
+    /// <summary>第一组落盘后文档变化立即停止，已完成结果及后续未执行数量保留。</summary>
+    [Fact]
+    public void ContextChangeBetweenCandidatesPreservesCompletedGroup()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Block("A"); main.Block("B"); child.Block("A"); child.Block("B");
+        main.Reference("X", child, child.Filename);
+        bool changed = false;
+        void Ensure() { if (changed) throw new Pn3DKit.Commands.XrefCheckStoppedException("原图已切换"); }
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, Ensure, _journal);
+        catalog.Discover(); var selection = XrefBlockBatch.Select(catalog.ReadNames(), Ensure);
+        var result = XrefBlockBatch.Compare(selection, catalog.ReadDefinition, () => catalog.ScopeComplete,
+            Ensure, item => { _journal.Append(item); changed = true; }, (_, _) => { });
+        Assert.Single(result.Results); Assert.Equal(2, result.Total);
+        Assert.Equal(2, catalog.RootReads); Assert.Equal("原图已切换", result.StopReason);
+        Assert.True(result.HasIssues);
     }
 
     /// <summary>只清理本测试创建的替身文件和日志。</summary>

@@ -45,6 +45,7 @@ namespace Autodesk.AutoCAD.DatabaseServices
         internal readonly List<ObjectId> Anonymous = [];
         internal Database? Loaded;
         internal int ReferenceReads;
+        internal int EntityEnumerations;
         public string Name { get; } = name;
         public bool IsLayout { get; set; }
         public bool IsFromExternalReference { get; set; }
@@ -59,7 +60,7 @@ namespace Autodesk.AutoCAD.DatabaseServices
         public List<ObjectId> GetBlockReferenceIds(bool directOnly, bool forceValidity)
         { ReferenceReads++; return []; }
         public List<ObjectId> GetAnonymousBlockIds() => Anonymous;
-        public IEnumerator<ObjectId> GetEnumerator() => Items.GetEnumerator();
+        public IEnumerator<ObjectId> GetEnumerator() { EntityEnumerations++; return Items.GetEnumerator(); }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
     /// <summary>模拟用于可达使用判断的插入引用。</summary>
@@ -158,17 +159,31 @@ namespace Autodesk.AutoCAD.DatabaseServices
 namespace Pn3DKit.Interop
 {
     /// <summary>来源测试的快照替身，真实快照读取仍由插件 SDK 构建和 CAD 复测验证。</summary>
-    internal sealed class XrefBlockSnapshotReader(Autodesk.AutoCAD.DatabaseServices.Database database, Action ensure, IReadOnlyList<string>? namespaces = null) : IDisposable
+    internal sealed class XrefBlockSnapshotReader : IDisposable
     {
+        private readonly Autodesk.AutoCAD.DatabaseServices.Database _database;
+        private readonly Action _ensure;
+        private readonly IReadOnlyList<string>? _namespaces;
         internal static Action<Autodesk.AutoCAD.DatabaseServices.Database>? OnRead;
+        internal static Func<Autodesk.AutoCAD.DatabaseServices.Database, Autodesk.AutoCAD.DatabaseServices.ObjectId, BlockContentSnapshot>? CreateSnapshot;
         internal static readonly List<string[]> NamespaceReads = [];
+        internal static readonly List<Autodesk.AutoCAD.DatabaseServices.ObjectId> RootsRead = [];
+        internal static int CreatedCount, DisposedCount;
+        /// <summary>记录真实目录何时创建读取器；名称预筛选不应触达这里。</summary>
+        internal XrefBlockSnapshotReader(Autodesk.AutoCAD.DatabaseServices.Database database, Action ensure,
+            IReadOnlyList<string>? namespaces = null)
+        {
+            _database = database; _ensure = ensure; _namespaces = namespaces;
+            CreatedCount++;
+        }
         internal BlockContentSnapshot Read(Autodesk.AutoCAD.DatabaseServices.ObjectId id)
         {
-            ensure(); NamespaceReads.Add(namespaces?.ToArray() ?? []); OnRead?.Invoke(database);
-            return new("root", new Dictionary<string, BlockContentNode>
+            _ensure(); NamespaceReads.Add(_namespaces?.ToArray() ?? []);
+            RootsRead.Add(id); OnRead?.Invoke(_database);
+            return CreateSnapshot?.Invoke(_database, id) ?? new("root", new Dictionary<string, BlockContentNode>
             { ["root"] = new("root", "快照替身", new Dictionary<string, string>(), []) }, []);
         }
-        public void Dispose() { }
+        public void Dispose() { DisposedCount++; }
     }
 }
 namespace Pn3DKit.Commands

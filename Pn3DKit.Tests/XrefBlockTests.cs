@@ -23,6 +23,15 @@ public sealed class XrefBlockTests : IDisposable
             graph with { Issues = issues ?? [], ReadError = error }, 1, used);
     }
 
+    /// <summary>使用真实名称筛选及按需回调运行已有快照，测试不加载 SDK。</summary>
+    private static XrefBlockBatchResult CompareDefinitions(IReadOnlyList<XrefBlockDefinition> definitions,
+        bool complete, Action ensure, Action<XrefBlockResult> append, Action<int, int> progress)
+    {
+        var entries = definitions.Select((d, i) => new XrefBlockNameEntry(i.ToString(), d.Name, d.Source, false)).ToArray();
+        var selection = XrefBlockBatch.Select(new(entries, definitions.Select(d => d.Source).ToArray(), complete), ensure);
+        return XrefBlockBatch.Compare(selection, e => definitions[int.Parse(e.Key)], () => complete, ensure, append, progress);
+    }
+
     /// <summary>构造精确字段，重复边不去重。</summary>
     private static BlockContentNode Node(string id, string kind, (string, string)[]? fields = null, BlockContentEdge[]? edges = null) =>
         new(id, kind, (fields ?? []).ToDictionary(x => x.Item1, x => x.Item2), edges ?? []);
@@ -215,7 +224,7 @@ public sealed class XrefBlockTests : IDisposable
         var a = Definition("A.dwg", host: true, name: "Valve");
         var b = Definition("b.dwg", name: "vALVE", chains: ["A → B", "A → C → B"]);
         var results = new List<XrefBlockResult>();
-        var batch = XrefBlockBatch.Compare([a, b], true, () => { }, results.Add, (_, _) => { });
+        var batch = CompareDefinitions([a, b], true, () => { }, results.Add, (_, _) => { });
         Assert.Single(batch.Results); Assert.False(batch.HasIssues);
         Assert.Equal(2, batch.Results[0].Groups[0].Definitions[1].Source.Chains.Count);
     }
@@ -237,8 +246,9 @@ public sealed class XrefBlockTests : IDisposable
     public void CancellationAndWriteFailurePreserveCompletedResults(bool cancel)
     {
         int writes = 0;
-        var items = new[] { Definition("a", name: "A"), Definition("b", name: "B"), Definition("c", name: "C") };
-        var result = XrefBlockBatch.Compare(items, true, () => { }, _ =>
+        var items = new[] { Definition("a", name: "A"), Definition("a2", name: "A"),
+            Definition("b", name: "B"), Definition("b2", name: "B"), Definition("c", name: "C"), Definition("c2", name: "C") };
+        var result = CompareDefinitions(items, true, () => { }, _ =>
         {
             if (++writes == 2) { if (cancel) throw new OperationCanceledException(); throw new IOException("写盘失败"); }
         }, (_, _) => { });
