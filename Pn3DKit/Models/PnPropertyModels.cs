@@ -12,16 +12,16 @@ public sealed record PnEditPermission(bool Allowed, string Reason)
 public sealed record PnPermissionFacts(bool MetadataKnown = false, bool FieldReadOnly = false,
     bool System = false, bool Automatic = false, bool Expression = false, bool Acquisition = false,
     bool DrawingWritable = false, bool ProjectWritable = false, bool Enlisted = false,
-    bool LayerLocked = true, bool Busy = true, bool Single = true, bool SpecialAllowed = false,
+    bool LayerLocked = true, bool Busy = true, bool SpecialAllowed = false,
     string UnknownReason = "");
 /// <summary>UI 只接收字符串和不可伪造的本轮编辑票据，不持有原生对象。</summary>
 public sealed record PnPropertyCell(PnPropertySpec Spec, FastPropertyValue Value, PnEditPermission Permission,
     Guid EditToken = default);
 /// <summary>单个 Plant 对象的当前属性和数据行身份。</summary>
-public sealed record PnObjectProperties(string TypeKey, string TypeLabel, IReadOnlyList<PnPropertyCell> Cells, string TargetKey = "");
+public sealed record PnObjectProperties(string TypeKey, string TypeLabel, IReadOnlyList<PnPropertyCell> Cells, string TargetKey = "", string Label = "");
 /// <summary>完整选择读取结束后发布，未完成轮次不显示部分共同值。</summary>
 public sealed record PnPanelSnapshot(string Header, int Count, IReadOnlyList<PnPropertyCell> Cells, string Status);
-/// <summary>用户显式提交的单元格修改，不包含 SDK 对象。</summary>
+/// <summary>用户显式提交的单元格修改；Original 仅用于单选兼容核对，多选原值来自宿主逐对象票据。</summary>
 public sealed record PnEditRequest(Guid Token, Guid RowId, long RowRevision, string Path, string Original, string Value);
 /// <summary>写前核对快照；宿主身份必须传入完整 ObjectId，禁止按文件名比较。</summary>
 public sealed record PnEditContext<TIdentity, TTarget>(TIdentity Identity, TTarget Target, long Epoch,

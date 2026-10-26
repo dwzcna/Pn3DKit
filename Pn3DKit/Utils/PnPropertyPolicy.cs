@@ -21,11 +21,10 @@ public static class PnPropertyPolicy
     public static bool IsBusy(bool batchRunning, bool commandRunning, bool quiescent, bool panelInputFocused) =>
         batchRunning || commandRunning || (!quiescent && !panelInputFocused);
 
-    /// <summary>所有元数据与对象状态都满足时才允许单对象写入。</summary>
+    /// <summary>逐对象核对元数据与状态；多选由全部对象的许可交集决定。</summary>
     public static PnEditPermission Permission(PnPermissionFacts facts)
     {
-        string? reason = !facts.Single ? "多选仅显示共同值，不开放批量编辑。"
-            : facts.Busy ? "CAD 或 Pn3DKit 批次忙碌，暂不可编辑。"
+        string? reason = facts.Busy ? "CAD 或 Pn3DKit 批次忙碌，暂不可编辑。"
             : !facts.MetadataKnown ? "无法确认写权限：" + facts.UnknownReason
             : facts.FieldReadOnly ? "SDK 字段为只读。"
             : facts.System ? "系统维护字段，不允许直接修改。"
@@ -50,8 +49,11 @@ public static class PnPropertyPolicy
         {
             if (objects.Any(x => x.Cells[index].Spec != spec)) throw new ArgumentException("属性行身份或修订号不一致。");
             var value = FastPropertyPolicy.MergeValues(objects.Select(x => x.Cells[index].Value).ToArray());
-            var permission = objects.Count == 1 ? objects[0].Cells[index].Permission
-                : PnEditPermission.ReadOnly("多选仅显示共同值，不开放批量编辑。");
+            var denied = objects.Where(x => !x.Cells[index].Permission.Allowed || x.Cells[index].Value.Kind != FastValueKind.Value)
+                .Select(x => x.TypeLabel + (x.Label.Length == 0 ? "" : "（" + x.Label + "）") + "：" +
+                    (!x.Cells[index].Permission.Allowed ? x.Cells[index].Permission.Reason
+                        : x.Cells[index].Value.Detail ?? "属性不存在或读取不可用。")).Distinct().ToArray();
+            var permission = denied.Length == 0 ? PnEditPermission.Writable : PnEditPermission.ReadOnly(string.Join("\n", denied));
             return new PnPropertyCell(spec, value, permission);
         }).ToArray();
         string type = objects.All(x => x.TypeKey == objects[0].TypeKey) ? objects[0].TypeLabel : "多种对象";
@@ -69,7 +71,8 @@ public static class PnPropertyPolicy
     public static string? Validate<TIdentity, TTarget>(PnEditContext<TIdentity, TTarget> expected, PnEditContext<TIdentity, TTarget> current)
     {
         if (!EqualityComparer<TIdentity>.Default.Equals(expected.Identity, current.Identity)) return "图纸身份已变化，编辑已过期。";
-        if (!EqualityComparer<TTarget>.Default.Equals(expected.Target, current.Target) || expected.SelectionCount != 1 || current.SelectionCount != 1) return "选择对象已变化，编辑已过期。";
+        if (!EqualityComparer<TTarget>.Default.Equals(expected.Target, current.Target) || expected.SelectionCount <= 0
+            || expected.SelectionCount != current.SelectionCount) return "选择对象已变化，编辑已过期。";
         if (expected.Epoch != current.Epoch) return "选择或对象状态已变化，请刷新后重试。";
         if (expected.RowId != current.RowId || expected.RowRevision != current.RowRevision || expected.Path != current.Path) return "属性路径已修改，旧值不可提交。";
         if (expected.TargetKey != current.TargetKey) return "Plant 数据关联或类别已变化。";

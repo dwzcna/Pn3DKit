@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Pn3DKit.Models;
 using Pn3DKit.Utils;
 using WpfTextBox = System.Windows.Controls.TextBox;
@@ -9,7 +10,7 @@ using WpfButton = System.Windows.Controls.Button;
 
 namespace Pn3DKit.UI;
 
-/// <summary>可配置的两列 Plant 属性表；路径始终可输入，值按宿主票据开放单对象编辑。</summary>
+/// <summary>可配置的两列 Plant 属性表；路径始终可输入，值按完整选择票据开放共有可写属性。</summary>
 internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
 {
     private sealed class PropertyRow
@@ -20,25 +21,33 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         internal required WpfTextBox Value;
         internal required Border Container;
         internal string Committed = "";
-        internal bool PendingPath, Editing;
+        internal bool PendingPath, Editing, Dirty, MenuOpen, MenuOpening;
+        internal long MenuRevision;
+        internal required TextBlock MixedHint;
         internal PnPropertyCell? Cell;
     }
     private readonly List<PropertyRow> _rows = [];
     private readonly StackPanel _table = new();
+    private readonly ResourceDictionary _controlStyles = FastPanelControlStyles.CreateResources();
+    private readonly RoutedUICommand _removePropertyRow = new("移除此属性行", "RemovePropertyRow", typeof(FastPropertiesView));
     private readonly TextBlock _objectType;
     private readonly TextBlock _footer;
+    private readonly WpfButton _catalog;
     private PropertyRow? _active;
-    private bool _updating, _focusSuspended, _retainingFocus;
+    private bool _updating, _focusSuspended, _retainingFocus, _clearingMenus;
     private WpfTextBox? _focusedInput;
+    private IInputElement? _observedFocus;
     internal bool HasInputFocus => _focusedInput != null;
     internal event Action<bool>? InputFocusChanged;
     internal event Action? RowsChanging;
     internal event Action? RowsCommitted;
     internal event Action<PnEditRequest>? EditRequested;
+    internal event Action? CatalogRequested;
 
     /// <summary>默认一空行；无对象、缺少项目或忙碌时仍允许修改属性列及增删行。</summary>
     internal FastPropertiesView()
     {
+        Resources.MergedDictionaries.Add(_controlStyles);
         FontFamily = new System.Windows.Media.FontFamily("Segoe UI, Microsoft YaHei UI");
         FontSize = 12; UseLayoutRounding = true; SnapsToDevicePixels = true;
         SetResourceReference(BackgroundProperty, "PanelBackground");
@@ -65,11 +74,17 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         Grid.SetRow(scroll, 2); root.Children.Add(scroll);
 
         var bottom = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
-        var tools = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        var tools = new WrapPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
         var add = Button("添加属性"); var remove = Button("删除属性");
-        add.Click += (_, _) => AddRow("");
-        remove.Click += (_, _) => RemoveActive();
-        tools.Children.Add(add); tools.Children.Add(remove); bottom.Children.Add(tools);
+        add.Click += (_, _) => FocusTrailingRow();
+        // 在鼠标引发失焦前停用草稿提交；实际点击移除时才撤销票据及行修订。
+        remove.PreviewMouseLeftButtonDown += (_, _) => { if (_active != null) _active.Editing = false; };
+        remove.Click += (_, _) => { if (_active != null) RemoveRow(_active); };
+        _catalog = Button("检索属性");
+        _catalog.Click += (_, _) => { if (_catalog.IsEnabled) CatalogRequested?.Invoke(); };
+        ToolTipService.SetShowOnDisabled(_catalog, true);
+        SetCatalogAvailability(false, "请选择一个有效的 Plant 对象，等待读取完成。");
+        tools.Children.Add(add); tools.Children.Add(remove); tools.Children.Add(_catalog); bottom.Children.Add(tools);
         _footer = Text("只读 · 未选择对象", new Thickness(0, 8, 0, 2));
         _footer.FontSize = 11; _footer.TextWrapping = TextWrapping.Wrap; _footer.MaxHeight = 64;
         _footer.SetResourceReference(TextBlock.ForegroundProperty, "PanelMuted");
@@ -79,15 +94,19 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(InputFocusChanging), true);
         AddHandler(Keyboard.LostKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(InputFocusChanging), true);
         Unloaded += (_, _) => ClearInputFocus();
-        AddRow("");
-        _active = _rows[0]; SetTheme(true);
+        _active = EnsureTrailingRow(); SetTheme(true);
     }
 
     /// <summary>跟踪本表输入框的目标焦点，属性和值均能获得键盘输入或复制。</summary>
-    private void InputFocusChanging(object sender, KeyboardFocusChangedEventArgs args) => TrackInputFocus(args.NewFocus);
+    private void InputFocusChanging(object sender, KeyboardFocusChangedEventArgs args)
+    {
+        _observedFocus = args.NewFocus; TrackInputFocus(args.NewFocus);
+    }
 
     private void TrackInputFocus(IInputElement? target)
     {
+        _observedFocus = target;
+        if (_rows.Any(r => r.MenuOpen || r.MenuOpening)) return; // 临时开启状态有 Dispatcher 收尾，不能永久阻断。
         _focusedInput = target is WpfTextBox box && _rows.Any(r => ReferenceEquals(r.Input, box) || ReferenceEquals(r.Value, box))
             ? box : null;
         PublishInputFocus();
@@ -98,7 +117,20 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     /// <summary>提交或拒绝结束后恢复正常输入；不主动激活或移动系统焦点。</summary>
     internal void ResumeInputFocus() { _focusSuspended = false; PublishInputFocus(); }
     /// <summary>隐藏、关闭或卸载时释放焦点保留，防止原生面板一直占有键盘。</summary>
-    internal void ClearInputFocus() { _focusedInput = null; _focusSuspended = false; PublishInputFocus(); }
+    internal void ClearInputFocus()
+    {
+        _clearingMenus = true;
+        try
+        {
+            foreach (var row in _rows)
+            {
+                row.MenuRevision++; row.MenuOpen = false; row.MenuOpening = false;
+                row.Input.ContextMenu.IsOpen = false; row.Value.ContextMenu.IsOpen = false;
+            }
+        }
+        finally { _clearingMenus = false; }
+        _focusedInput = null; _observedFocus = null; _focusSuspended = false; PublishInputFocus();
+    }
 
     private void PublishInputFocus()
     {
@@ -123,9 +155,11 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             {
                 var row = _rows.FirstOrDefault(r => r.Id == cell.Spec.Id);
                 if (row == null || row.Revision != cell.Spec.Revision || row.PendingPath) continue;
-                row.Cell = cell; row.Editing = false;
+                row.Cell = cell; row.Dirty = false;
                 row.Value.IsReadOnly = !cell.Permission.Allowed || cell.EditToken == Guid.Empty;
-                row.Value.Text = !row.Value.IsReadOnly && ReferenceEquals(_focusedInput, row.Value) ? cell.Value.Raw : cell.Value.Display;
+                row.Editing = !row.Value.IsReadOnly && ReferenceEquals(_focusedInput, row.Value);
+                row.Value.Text = row.Editing ? cell.Value.Raw : cell.Value.Display;
+                UpdateMixedHint(row);
                 row.Value.ToolTip = Tip(cell.Value.Display + (string.IsNullOrWhiteSpace(cell.Value.Detail) ? "" : "\n" + cell.Value.Detail)
                     + "\n" + cell.Permission.Reason);
             }
@@ -136,14 +170,15 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     /// <summary>状态变化立即撤销编辑许可，保留路径输入；读取权限重新确认后再开放。</summary>
     internal void SuspendEditing()
     {
+        SetCatalogAvailability(false, "正在刷新或忙碌，暂不可检索。");
         _updating = true;
         try
         {
             foreach (var row in _rows)
             {
                 row.Value.IsReadOnly = true;
-                if (row.Editing) row.Value.Text = row.Cell?.Value.Display ?? "—";
-                row.Cell = null; row.Editing = false;
+                if (row.Editing) row.Value.Text = row.Cell?.Value.Display ?? "";
+                row.Cell = null; row.Editing = false; row.Dirty = false; UpdateMixedHint(row);
             }
         }
         finally { _updating = false; }
@@ -151,25 +186,45 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
 
     internal void ShowStatus(string message) { _footer.Text = message; _footer.ToolTip = Tip(message); }
 
-    /// <summary>连续行不含分组，属性名和只读值均能选择复制。</summary>
-    private void AddRow(string name)
+    /// <summary>宿主在完整选择读取后开放检索；禁用状态仍显示具体原因。</summary>
+    internal void SetCatalogAvailability(bool allowed, string reason)
     {
-        SuspendEditing();
-        var input = CellBox(); var value = CellBox(valueCell: true); value.IsReadOnly = true; value.Text = "—";
+        _catalog.IsEnabled = allowed; _catalog.ToolTip = Tip(reason);
+    }
+
+    /// <summary>只追加规范化后缺失的属性；不移除已有行、不赋值或写入对象。</summary>
+    /// <returns>本次追加行数；零项时不改票据和行修订。</returns>
+    internal int AppendCatalogProperties(IEnumerable<string> selected)
+    {
+        var additions = PnPropertyCatalogPolicy.MissingPaths(_rows.Select(x => x.Input.Text), selected);
+        if (additions.Count == 0) return 0;
+        SuspendEditing(); RowsChanging?.Invoke();
+        foreach (string name in additions) AddRow(name, beforeTail: true);
+        EnsureTrailingRow(); RowsCommitted?.Invoke();
+        return additions.Count;
+    }
+
+    /// <summary>连续行不含分组，属性名和只读值均能选择复制。</summary>
+    private PropertyRow AddRow(string name, bool beforeTail = false)
+    {
+        var input = CellBox(); var value = CellBox(valueCell: true); value.IsReadOnly = true; value.Text = "";
         var grid = Columns(); grid.Children.Add(input); Grid.SetColumn(value, 1); grid.Children.Add(value);
+        var mixedHint = Text("多种值", new Thickness(8, 3, 6, 3)); mixedHint.IsHitTestVisible = false;
+        mixedHint.Visibility = Visibility.Collapsed; mixedHint.SetResourceReference(TextBlock.ForegroundProperty, "PanelMuted");
+        Grid.SetColumn(mixedHint, 1); grid.Children.Add(mixedHint);
         var split = new Border { BorderThickness = new Thickness(1, 0, 0, 0), IsHitTestVisible = false };
         split.SetResourceReference(Border.BorderBrushProperty, "PanelBorder"); Grid.SetColumn(split, 1); grid.Children.Add(split);
         var container = Surface(grid); container.BorderThickness = new Thickness(1, 0, 1, 1);
-        var row = new PropertyRow { Input = input, Value = value, Container = container, Committed = name };
+        var row = new PropertyRow { Input = input, Value = value, Container = container, Committed = name, MixedHint = mixedHint };
         input.Text = name;
         input.TextChanged += (_, _) =>
         {
             if (_updating) return;
             row.Revision++; row.PendingPath = true; SuspendEditing();
-            row.Value.Text = "—"; RowsChanging?.Invoke();
+            row.Value.Text = ""; RowsChanging?.Invoke();
         };
         input.GotKeyboardFocus += (_, _) => _active = row;
-        input.LostKeyboardFocus += (_, e) => { TrackInputFocus(e.NewFocus); CommitPath(row); };
+        input.LostKeyboardFocus += (_, e) => { TrackInputFocus(e.NewFocus); if (!row.MenuOpen && !row.MenuOpening) CommitPath(row); };
         input.PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter) { e.Handled = true; CommitPath(row); }
@@ -182,64 +237,193 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         value.GotKeyboardFocus += (_, _) =>
         {
             _active = row;
-            if (value.IsReadOnly || row.Cell == null) return;
-            row.Editing = true; value.Text = row.Cell.Value.Raw;
+            if (value.IsReadOnly || row.Cell == null || row.Editing) return;
+            row.Editing = true; row.Dirty = false;
+            _updating = true;
+            try { value.Text = row.Cell.Value.Raw; UpdateMixedHint(row); }
+            finally { _updating = false; }
         };
         value.TextChanged += (_, _) =>
         {
-            if (!_updating && ReferenceEquals(_focusedInput, value) && !value.IsReadOnly && row.Cell != null) row.Editing = true;
+            if (!_updating && ReferenceEquals(_focusedInput, value) && !value.IsReadOnly && row.Cell != null)
+            { row.Editing = true; row.Dirty = true; UpdateMixedHint(row); }
         };
         value.LostKeyboardFocus += (_, e) =>
         {
-            TrackInputFocus(e.NewFocus); CommitValue(row);
-            // 未提交的空值在离开后恢复占位；不将占位文本作为输入再次提交。
-            if (row.Cell != null)
-            {
-                _updating = true;
-                try { value.Text = row.Cell.Value.Display; }
-                finally { _updating = false; }
-            }
+            TrackInputFocus(e.NewFocus);
+            if (row.MenuOpen || row.MenuOpening) return;
+            CommitValue(row); RestoreDisplay(row);
         };
         value.PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter) { e.Handled = true; CommitValue(row); }
             else if (e.Key == Key.Escape)
             {
-                e.Handled = true;
-                if (row.Cell != null) value.Text = row.Cell.Value.Raw;
+                e.Handled = true; row.Dirty = false; row.Editing = !value.IsReadOnly && row.Cell != null;
+                if (row.Cell != null)
+                {
+                    _updating = true;
+                    try { value.Text = row.Cell.Value.Raw; UpdateMixedHint(row); }
+                    finally { _updating = false; }
+                }
+            }
+            else if (e.Key is Key.Delete or Key.Back && !value.IsReadOnly && row.Cell?.Value.Kind == FastValueKind.Mixed)
+            {
+                // 混合值的输入缓冲本来为空；明确 Delete/Backspace 仍代表用户要求清空。
+                row.Editing = true; row.Dirty = true; UpdateMixedHint(row);
             }
         };
-        _rows.Add(row); _table.Children.Add(container); _active = row;
-        RowsChanging?.Invoke(); RowsCommitted?.Invoke();
-        if (string.IsNullOrEmpty(name)) input.Focus();
+        BindRemoveShortcut(row, input); BindRemoveShortcut(row, value);
+        input.ContextMenu = RowMenu(row, input); value.ContextMenu = RowMenu(row, value);
+        int index = beforeTail && _rows.Count != 0 && IsPlaceholder(_rows[^1]) ? _rows.Count - 1 : _rows.Count;
+        _rows.Insert(index, row); _table.Children.Insert(index, container);
+        return row;
     }
 
-    /// <summary>删除选中输入行不会写入对象，移除前先废弃该行票据。</summary>
-    private void RemoveActive()
+    /// <summary>只补末尾占位，不改变已有行、焦点及滚动位置。</summary>
+    private PropertyRow EnsureTrailingRow() => _rows.Count != 0 && string.IsNullOrWhiteSpace(_rows[^1].Input.Text)
+        ? _rows[^1] : AddRow("");
+
+    /// <summary>手动添加入口定位已有空行，提交末行后也不重复创建。</summary>
+    private void FocusTrailingRow()
     {
-        var row = _active;
-        if (row == null) return;
-        ClearInputFocus(); SuspendEditing(); RowsChanging?.Invoke();
-        _rows.Remove(row); _table.Children.Remove(row.Container);
-        _active = _rows.LastOrDefault(); RowsCommitted?.Invoke();
+        if (_rows.Count != 0) CommitPath(_rows[^1]);
+        var row = EnsureTrailingRow(); _active = row;
+        row.Input.Focus(); row.Input.BringIntoView();
     }
+
+    private bool IsPlaceholder(PropertyRow row) => _rows.Count != 0 && ReferenceEquals(row, _rows[^1])
+        && string.IsNullOrWhiteSpace(row.Input.Text);
+
+    /// <summary>移除入口在焦点离开前废弃未提交值；不触发 EditRequested。</summary>
+    private void DiscardForRemoval(PropertyRow? row)
+    {
+        if (row == null || !_rows.Contains(row) || IsPlaceholder(row)) return;
+        row.Editing = false; row.Dirty = false; row.Cell = null; row.MenuRevision++; row.Revision++;
+        SuspendEditing(); RowsChanging?.Invoke();
+    }
+
+    /// <summary>移除明确指定的行，右键不依赖先前活动行；失焦不能提交已移除行。</summary>
+    private void RemoveRow(PropertyRow row)
+    {
+        if (!_rows.Contains(row) || IsPlaceholder(row)) return;
+        DiscardForRemoval(row);
+        if (ReferenceEquals(_focusedInput, row.Input) || ReferenceEquals(_focusedInput, row.Value)) ClearInputFocus();
+        _rows.Remove(row); _table.Children.Remove(row.Container);
+        var tail = EnsureTrailingRow();
+        if (ReferenceEquals(_active, row)) _active = tail;
+        RowsCommitted?.Invoke();
+    }
+
+    /// <summary>快捷键只绑定到本表单元格，不注册 CAD 全局命令或快捷键。</summary>
+    private void BindRemoveShortcut(PropertyRow row, WpfTextBox box)
+    {
+        box.CommandBindings.Add(new CommandBinding(_removePropertyRow,
+            (_, e) => { e.Handled = true; RemoveRow(row); },
+            (_, e) => { e.CanExecute = _rows.Contains(row) && !IsPlaceholder(row); e.Handled = true; }));
+        box.InputBindings.Add(new KeyBinding(_removePropertyRow, new KeyGesture(Key.D, ModifierKeys.Control))
+            { CommandTarget = box });
+        box.PreviewKeyDown += (_, e) => HandleRemoveShortcut(e, box);
+    }
+
+    /// <summary>在移除导致焦点变化前消费 Ctrl+D，防止按键泄漏到 CAD；尾空行只消费不移除。</summary>
+    private bool HandleRemoveShortcut(System.Windows.Input.KeyEventArgs args, WpfTextBox target)
+    {
+        if (args.Key != Key.D || args.KeyboardDevice.Modifiers != ModifierKeys.Control) return false;
+        args.Handled = true;
+        if (_removePropertyRow.CanExecute(null, target)) _removePropertyRow.Execute(null, target);
+        return true;
+    }
+
+    /// <summary>保留文本菜单，增加行级移除；弹出菜单借用焦点不隐式写入值。</summary>
+    private ContextMenu RowMenu(PropertyRow row, WpfTextBox box)
+    {
+        var menu = new ContextMenu { Style = (Style)_controlStyles[typeof(ContextMenu)] };
+        // Popup 不在原视图的可视树中，显式桥接资源，主题切换才能同步覆盖菜单内部。
+        menu.Resources.MergedDictionaries.Add(Resources);
+        var itemStyle = (Style)_controlStyles[typeof(MenuItem)];
+        foreach (var pair in new[] { ("撤销", ApplicationCommands.Undo), ("剪切", ApplicationCommands.Cut),
+            ("复制", ApplicationCommands.Copy), ("粘贴", ApplicationCommands.Paste), ("全选", ApplicationCommands.SelectAll) })
+            menu.Items.Add(new MenuItem { Header = pair.Item1, Command = pair.Item2, CommandTarget = box, Style = itemStyle });
+        menu.Items.Add(new Separator { Style = (Style)_controlStyles[typeof(Separator)] });
+        var remove = new MenuItem
+        {
+            Header = "移除此属性行", Style = itemStyle, Command = _removePropertyRow,
+            CommandTarget = box, InputGestureText = "Ctrl+D"
+        };
+        menu.Items.Add(remove);
+        menu.PreviewKeyDown += (_, e) => { if (HandleRemoveShortcut(e, box)) menu.IsOpen = false; };
+        box.PreviewMouseRightButtonDown += (_, _) => _active = row;
+        box.ContextMenuOpening += (_, _) =>
+        {
+            row.MenuOpening = true; _active = row; remove.IsEnabled = !IsPlaceholder(row);
+            long revision = ++row.MenuRevision;
+            Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+            {
+                if (!_rows.Contains(row) || revision != row.MenuRevision || _clearingMenus) return;
+                row.MenuOpening = false;
+                if (menu.IsOpen) row.MenuOpen = true;
+                else FinishMenu(row);
+            }));
+        };
+        menu.Opened += (_, _) =>
+        {
+            row.MenuRevision++; row.MenuOpening = false; row.MenuOpen = true;
+            _active = row; remove.IsEnabled = !IsPlaceholder(row);
+        };
+        menu.Closed += (_, _) =>
+        {
+            row.MenuOpening = false; row.MenuOpen = false;
+            if (_clearingMenus) return;
+            long revision = ++row.MenuRevision;
+            Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+            { if (_rows.Contains(row) && revision == row.MenuRevision && !_clearingMenus) FinishMenu(row); }));
+        };
+        return menu;
+    }
+
+    /// <summary>菜单没有打开或已经关闭后按实际焦点收尾，返回编辑器不丢草稿，离开才提交。</summary>
+    private void FinishMenu(PropertyRow row)
+    {
+        row.MenuOpening = false; row.MenuOpen = false;
+        TrackInputFocus(_observedFocus);
+        if (!ReferenceEquals(_observedFocus, row.Input)) CommitPath(row);
+        if (!ReferenceEquals(_observedFocus, row.Value)) { CommitValue(row); RestoreDisplay(row); }
+    }
+
+    private void RestoreDisplay(PropertyRow row)
+    {
+        if (row.Cell == null) return;
+        _updating = true;
+        try
+        {
+            row.Editing = !row.Value.IsReadOnly && ReferenceEquals(_observedFocus, row.Value);
+            row.Value.Text = row.Editing ? row.Cell.Value.Raw : row.Cell.Value.Display;
+            UpdateMixedHint(row);
+        }
+        finally { _updating = false; }
+    }
+
+    private static void UpdateMixedHint(PropertyRow row) => row.MixedHint.Visibility =
+        row.Editing && !row.Dirty && row.Cell?.Value.Kind == FastValueKind.Mixed && row.Value.Text.Length == 0
+            ? Visibility.Visible : Visibility.Collapsed;
 
     /// <summary>回车或离开路径单元格才触发读取，编辑过程中不查询新路径。</summary>
     private void CommitPath(PropertyRow row)
     {
-        if (!row.PendingPath) return;
+        if (_clearingMenus || !_rows.Contains(row) || !row.PendingPath) return;
         row.Committed = row.Input.Text; row.PendingPath = false;
         string? path = PnPropertyPolicy.Normalize(row.Committed, out string reason);
-        row.Input.ToolTip = Tip(path ?? reason); RowsCommitted?.Invoke();
+        row.Input.ToolTip = Tip(path ?? reason); EnsureTrailingRow(); RowsCommitted?.Invoke();
     }
 
     /// <summary>提交当前票据及原值；视图不操作 SDK，拒绝过期由宿主再次验证。</summary>
     private void CommitValue(PropertyRow row)
     {
-        if (_updating || !row.Editing || row.Value.IsReadOnly || row.Cell == null) return;
-        var cell = row.Cell; row.Editing = false;
+        if (_updating || _clearingMenus || !_rows.Contains(row) || row.MenuOpen || row.MenuOpening || !row.Editing || !row.Dirty || row.Value.IsReadOnly || row.Cell == null) return;
+        var cell = row.Cell; row.Editing = false; row.Dirty = false; UpdateMixedHint(row);
         string value = row.Value.Text;
-        if (value == cell.Value.Raw)
+        if (cell.Value.Kind == FastValueKind.Value && value == cell.Value.Raw)
         {
             _updating = true;
             try { row.Value.Text = ReferenceEquals(_focusedInput, row.Value) ? cell.Value.Raw : cell.Value.Display; }
@@ -257,9 +441,9 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     internal void SetTheme(bool dark)
     {
         string[] keys = ["PanelBackground", "PanelSurface", "PanelForeground", "PanelMuted", "PanelBorder", "PanelHeader", "PanelSelection",
-            "PanelReadOnlyBackground", "PanelReadOnlyForeground"];
-        string[] colors = dark ? ["#384252", "#3E4959", "#EDF1F6", "#C1CAD6", "#505D70", "#2D3644", "#6686AB", "#354050", "#9FA9B7"]
-            : ["#EDF0F4", "#F9FAFC", "#263244", "#59697D", "#CBD3DD", "#DEE4EC", "#A8C8E8", "#E6E9EE", "#737C88"];
+            "PanelReadOnlyBackground", "PanelReadOnlyForeground", "PanelMenuHover"];
+        string[] colors = dark ? ["#384252", "#3E4959", "#EDF1F6", "#C1CAD6", "#505D70", "#2D3644", "#6686AB", "#354050", "#9FA9B7", "#4B617E"]
+            : ["#EDF0F4", "#F9FAFC", "#263244", "#59697D", "#CBD3DD", "#DEE4EC", "#A8C8E8", "#E6E9EE", "#737C88", "#D5E2F2"];
         for (int i = 0; i < keys.Length; i++)
         {
             var brush = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(colors[i]));
@@ -302,12 +486,11 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         box.SetResourceReference(WpfTextBox.CaretBrushProperty, "PanelForeground"); box.SetResourceReference(WpfTextBox.SelectionBrushProperty, "PanelSelection");
         ToolTipService.SetShowDuration(box, 60000); return box;
     }
-    private static WpfButton Button(string title)
+    private WpfButton Button(string title) => new()
     {
-        var button = new WpfButton { Content = title, Padding = new Thickness(9, 4, 9, 4), Margin = new Thickness(0, 0, 8, 0) };
-        button.SetResourceReference(BackgroundProperty, "PanelHeader"); button.SetResourceReference(ForegroundProperty, "PanelForeground");
-        button.SetResourceReference(BorderBrushProperty, "PanelBorder"); return button;
-    }
+        Content = title, Padding = new Thickness(9, 4, 9, 4), Margin = new Thickness(0, 0, 8, 0),
+        Style = (Style)_controlStyles[typeof(WpfButton)]
+    };
     private static TextBlock Text(string text, Thickness margin)
     {
         var result = new TextBlock { Text = text, Margin = margin, VerticalAlignment = VerticalAlignment.Center };

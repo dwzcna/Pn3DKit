@@ -37,6 +37,9 @@ public static class FastPropertyPolicy
         if (values.Any(v => v.Kind == FastValueKind.Missing))
             return FastPropertyValue.Missing((values.All(v => v.Kind == FastValueKind.Missing) ? "" : "此属性不适用于所有选中对象。\n") + details);
         if (values.Any(v => v.Kind == FastValueKind.Error)) return FastPropertyValue.Error(details);
+        if (values.Any(v => v.Kind == FastValueKind.AbsentProperty))
+            return FastPropertyValue.AbsentProperty((values.All(v => v.Kind == FastValueKind.AbsentProperty)
+                ? "" : "部分选中对象不含此属性。\n") + details);
         if (values.All(v => string.Equals(v.Raw, values[0].Raw, StringComparison.Ordinal))) return values[0];
         return new(FastValueKind.Mixed, Detail: "不同值：\n" + string.Join("\n", values.Select(v => v.Display).Distinct().Take(10)));
     }

@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.26 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.26
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.27 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.27
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.26 -OutputDirectory artifacts/release/0.1.26
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.27 -OutputDirectory artifacts/release/0.1.27
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils 中的同一份源码，不引用或加载 Autodesk。SDK 适配层通过插件编译、命令元数据检查及授权后的实际 CAD 验收验证。
@@ -68,7 +68,7 @@ $sdk = ./build/Get-PlantSdk.ps1
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.26/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.27/。
 
 ## 当前实现与验收
 
@@ -76,7 +76,7 @@ $sdk = ./build/Get-PlantSdk.ps1
 
 已测试：离线策略、Fake Host 生命周期、默认否、冲突、数据行别名、日志、保存等待及异常收尾；插件通过双配置构建和九条命令元数据校验，实际结果见 Changlog.md 和 validation 日志。
 
-未完成：CAD 实机验收仍待执行；本轮 0.1.26 仅验证并本地提交，不推送、不发布。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
+未完成：CAD 实机验收仍待执行；本轮 0.1.27 完成本机验证后按授权提交、普通推送 main／v0.1.27 并通过现有 Actions 正式发布。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 
@@ -90,12 +90,20 @@ RunPaths 统一以系统文档目录生成 Pn3DKit/用途/时间戳。RunLogFile
 
 PNFASTPANEL 保留 PICKFIRST，由 FastPanelController 管理原生 PaletteSet。FastPropertiesView 使用连续的 Pn属性／值两列，默认一空行；属性行可增删改，路径列始终可编辑。输入立即撤销旧行许可，回车或失焦才读取；值按一次性票据在回车或失焦时提交，Esc 还原当前输入。UI 不持有 SDK 对象，模型不引用 Autodesk。
 
-文本输入／复制期间由 WPF 焦点事件驱动 PaletteSet.KeepFocus，离开表格或隐藏时释放，属性提交期间保持原焦点。FastSelectionController 在读锁外结合批次、CommandInProgress、IsQuiescent 和表格输入焦点固定忙碌状态，再传入属性适配；事务内不重复查询 IsQuiescent。FastSelectionController 的选择、文档、对象及命令事件只使轮次失效，主线程 Idle 分批读取完整选择。PnPropertyPolicy 归一化自身路径、汇总共同值并保守判断权限，PnPropertyBatch 丢弃旧轮次。完整 BlockTableId、项目身份、行修订和票据共同隔离跨图纸、跨选择及跨属性编辑。多选始终只读；隐藏或忙碌暂停，关闭及退出解绑。
+文本输入／复制期间由 WPF 焦点事件驱动 PaletteSet.KeepFocus，离开表格或隐藏时释放，属性提交期间保持原焦点。FastSelectionController 在读锁外结合批次、CommandInProgress、IsQuiescent 和表格输入焦点固定忙碌状态，再传入属性适配；事务内不重复查询 IsQuiescent。FastSelectionController 的选择、文档、对象及命令事件只使轮次失效，主线程 Idle 分批读取完整选择。PnPropertyPolicy 归一化自身路径、汇总共同值并保守判断权限，PnPropertyBatch 丢弃旧轮次。完整 BlockTableId、项目身份、行修订和票据共同隔离跨图纸、跨选择及跨属性编辑。多选权限取所有对象的许可交集，任一缺少／只读／未知则整行只读；隐藏或忙碌暂停，关闭及退出解绑。
 
 FastPlantPropertiesAccess 直接读取 TargetObject 对应的数据行列，不展开关系或回退改写其他列。权限与提交前的类型、长度校验统一通过 FindEffectiveColumn 解析 table.AllColumns，包含继承字段；列约束仍从实际类别的 GetColumnAttributeNames／GetColumnAttribute 读取，保留类别覆盖。不得改回仅含本类定义的 Columns，否则继承的 Comment、Area 会被误判缺少元数据。权限包括 PnPColumn 的只读／系统／计数／自动生成／表达式／扩展／唯一性、明确列约束、IsAcquisitionProperty／GetAcquisitionStatus、Project.ReadOnly、图纸只读、读写登记、图层锁定和批次状态。PnPropertyMetadataPolicy 是实际 SDK 适配调用的纯策略：描述性元数据不判只读、不额外查询其值；必要约束无法解析或读取失败时只读。非获取字段不查询获取状态，普通字段不读取或拆分 Tag 格式；Tag 单独校验有效格式和注册表。Tag 限有有效格式和注册表的非临时 PnId 普通元件；管线、组、Piping 和缺少注册表时只读。
 
-每次值提交通过共用 BatchRunGate 持有互斥，通过 AutoCadHost.InLockedDocumentAsync 在主线程应用上下文锁定文档，不启动命令，保留 PICKFIRST 和面板焦点。写前重新读取权限、原值、数据关联、完整身份、选择和路径修订；最后一刻重复校验。DataLinksManager.SetProperties 仅写所选对象自身列，事务后立即回读。Tag 在写前使用候选注册键排除占用，写后核对登记归属。失败保留 SDK 状态及可读实际值，不假定回滚；不调用自动编号、获取模式切换、全局 AcceptChanges、QSAVE 或直接数据库写入。Regen 和 DWG／Plant 缓存撤销效果仍待实机。
+每次值提交通过共用 BatchRunGate 持有互斥，通过 AutoCadHost.InLockedDocumentAsync 在主线程应用上下文锁定当前文档，保留 PICKFIRST 与焦点，不启动 CAD 命令。多目标票据记录完整 ObjectId 集合、逐对象数据关联及原值。PnPropertyEditPolicy 忽略选择顺序但拒绝增减、过期、原值或权限变化；PnPropertyEditBatch 先对全部目标 Prepare，再检查项目／批内注册键冲突，预检通过后逐数据行写入并回读，别名只写一次。实际错误立即停止，结果保留逐项句柄、原值、新值、实际值和 SDK 状态；不假定回滚。每步完整 Capture 区分写入带来的刷新与非预期目标变化，结束后统一 Regen，刷新失败单独报告。不保存、不生成编号、不改变获取模式、不全局提交项目数据；DWG／Plant 缓存撤销待实机验证。
 
-FastPropertiesView 沿用蓝灰／灰白动态画刷、原生停靠和高 DPI。值列使用独立样式，正常背景／文字置于 Setter，IsReadOnly 触发器切换专用灰色动态资源，避免局部值遮蔽；保持 IsEnabled=true，保留焦点、选择复制和 Tooltip。无有效票据等所有实际只读状态均灰显，恢复许可及深浅主题切换自动更新。表格最小行高 24 DIP，上下内边距 3 DIP，字号仍为 12，自动高度避免裁切。纯 WPF 离屏宿主使用合成数据，不加载 Autodesk；九条命令、单 DLL。0.1.26 仅调整显示，保留既有提交和身份校验，不推送或发布。
+FastPropertiesView 沿用蓝灰／灰白动态画刷、原生停靠和高 DPI。值列使用独立样式，正常背景／文字置于 Setter，IsReadOnly 触发器切换专用灰色动态资源，避免局部值遮蔽；保持 IsEnabled=true，保留焦点、选择复制和 Tooltip。无有效票据等所有实际只读状态均灰显，恢复许可及深浅主题切换自动更新。表格最小行高 24 DIP，上下内边距 3 DIP，字号仍为 12，自动高度避免裁切。纯 WPF 离屏宿主使用合成数据，不加载 Autodesk；九条命令、单 DLL。面板保留末尾自动空行和右键移除；菜单借用焦点不提交，移除前撤销草稿与票据。菜单 MenuOpen 仅表示实际打开；ContextMenuOpening 的临时状态在 Dispatcher 确认，取消开启及关闭／隐藏／卸载均清理。混合值输入缓冲和提示分离，只有实际输入或明确删除才产生脏态；保留既有身份校验。
+
+属性检索由 FastSelectionController 在主线程 Idle 读取，不新增 CAD 命令：固定完整 BlockTableId、对象、项目关联及轮次；SDK 读锁／事务在 CAD ShowModalWindow 前释放，确认后再次核对选择和关联。FastPlantPropertiesAccess.Catalog 使用 GetAllProperties(objectId, true) 的自身属性键，调用 context.Part.GetColumnDisplayName(table, name)，通过所属项目字符串表及实际类别配对名称，再由 SDK 回退列 DisplayName；不再以 GetColumnAttributeNames 是否声明 DisplayName 为门槛；不展开关系、不调用格式求值／写入／提交。PropertyCatalogView 只接收文本 DTO，勾选通过确认后才调用面板规范化追加流程；元数据失败保留属性和详情。属性路径始终保留内部名，显示名只用于第二列及提示；只读属性仍可加入供浏览。无效路径保留在目录但禁用添加并说明原因。
+
+FastPanelControlStyles 在每个视图 UI 线程创建局部 WPF 模板，统一按钮、行右键菜单及分隔线。Popup 显式合并视图资源，深浅主题即时同步；菜单不再采用系统白色图标槽，禁用文字、悬停及分隔线分别使用面板动态画刷。按钮模板覆盖 WPF 默认白色禁用背景，保留原生 IsEnabled、Command、CommandTarget 和焦点／移除规则，不修改 CAD 全局资源。检索窗口第二列标题为“显示名称”，内部 FriendlyDisplayName 数据字段保持。
+
+行移除使用每视图专用 RoutedUICommand，命令绑定和 Ctrl+D 输入绑定只安装在本表的路径／值格。菜单 CommandTarget 明确指向所属格，显示 Ctrl+D；PreviewKeyDown 在移除导致焦点变化前消费按键。占位空行及已移除行拒绝执行，不注册到 CAD 全局，不修改其他按键含义，不触发值提交。
+
+值显示通过 FastValueKind 区分已有值、未就绪和确认不存在属性：SDK HasProperty 返回 false 才产生 AbsentProperty 并显示 ASCII --；已有空值和未就绪显示空白，错误仍显示读取失败。Raw 保持真实内容用于共同值比较和提交，显示标记不参与写入。多选部分缺少属性保留原因；混选未知状态不推断为确认缺少。
 
 Pn3DKit.Tests 启用纯 WPF 并链接 FastPropertiesView，以独立 STA 路由事件验证 Comment 许可、空值、焦点保留请求、Enter／失焦／Esc、默认空行及旧快照失效。测试不打开窗口、不设置系统焦点、不加载 Autodesk；WPF 离屏预览不能代替原生 PaletteSet 和真实 SDK 验收。

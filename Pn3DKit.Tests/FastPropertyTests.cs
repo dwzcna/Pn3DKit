@@ -102,7 +102,7 @@ public sealed class FastPropertyTests
         var empty = With(Plant(), FastProperty.Tag, FastPropertyValue.Value(""));
         var missing = With(Plant(), FastProperty.Tag, FastPropertyValue.Missing("没有 Tag 列"));
         var literal = With(Plant(), FastProperty.Tag, FastPropertyValue.Value("—"));
-        Assert.Equal("—", FastPropertyPolicy.Merge([empty]).Values[6].Display);
+        Assert.Equal("", FastPropertyPolicy.Merge([empty]).Values[6].Display);
         Assert.Equal(FastValueKind.Value, FastPropertyPolicy.Merge([empty, empty]).Values[6].Kind);
         Assert.Equal(FastValueKind.Mixed, FastPropertyPolicy.Merge([empty, literal]).Values[6].Kind);
         Assert.Equal(FastValueKind.Missing, FastPropertyPolicy.Merge([missing, literal]).Values[6].Kind);
@@ -127,7 +127,7 @@ public sealed class FastPropertyTests
         var missing = With(Plant(), FastProperty.Tag, FastPropertyValue.Missing("没有属性"));
         var error = With(Plant(), FastProperty.Tag, FastPropertyValue.Error("数据库读取失败"));
         var result = FastPropertyPolicy.Merge([missing, error]);
-        Assert.Equal("—", result.Values[6].Display);
+        Assert.Equal("", result.Values[6].Display);
         Assert.Contains("数据库读取失败", result.Values[6].Detail);
         Assert.Contains("读取失败", result.Status);
     }
@@ -161,7 +161,7 @@ public sealed class FastPropertyTests
         for (int i = 4; i < 8; i++) cad = With(cad, (FastProperty)i, FastPropertyValue.Missing());
         var result = FastPropertyPolicy.Merge([cad]);
         Assert.Equal("设备", result.Values[1].Display);
-        Assert.All(result.Values.Skip(4), v => Assert.Equal("—", v.Display));
+        Assert.All(result.Values.Skip(4), v => Assert.Equal("", v.Display));
         Assert.Contains("常规属性", result.Status);
         Assert.DoesNotContain("读取失败", result.Status);
     }

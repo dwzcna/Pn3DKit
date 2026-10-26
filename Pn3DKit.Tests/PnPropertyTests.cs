@@ -60,7 +60,7 @@ public sealed class PnPropertyTests
     [InlineData("enlist", "读写")]
     [InlineData("layer", "图层")]
     [InlineData("busy", "忙碌")]
-    [InlineData("multi", "多选")]
+
     [InlineData("special", "安全写入")]
     [InlineData("unknown", "未知规则X")]
     public void EachRestrictionIndependentlyDeniesWrite(string restriction, string reason)
@@ -78,7 +78,7 @@ public sealed class PnPropertyTests
             "enlist" => facts with { Enlisted = false },
             "layer" => facts with { LayerLocked = true },
             "busy" => facts with { Busy = true },
-            "multi" => facts with { Single = false },
+
             "special" => facts with { SpecialAllowed = false },
             _ => facts with { MetadataKnown = false, UnknownReason = "未知规则X" }
         };
@@ -120,15 +120,15 @@ public sealed class PnPropertyTests
         Assert.True(result.Cells[0].Permission.Allowed);
     }
 
-    /// <summary>多选共同值可以复制，但任何字段都不开放批量写入。</summary>
+    /// <summary>全部对象许可时，共同值和多种值都允许统一输入，不能依赖类别相同。</summary>
     [Fact]
-    public void MultiSelectionNeverGrantsEditingEvenForCommonValues()
+    public void MultiSelectionGrantsEditingOnlyWhenEveryObjectAllowsIt()
     {
         var result = PnPropertyPolicy.Merge(Specs, [Object(), Object("HV-1002")]);
         Assert.Equal(2, result.Count);
         Assert.Equal("DN50", result.Cells[0].Value.Display);
         Assert.Equal("多种值", result.Cells[1].Value.Display);
-        Assert.All(result.Cells, c => Assert.False(c.Permission.Allowed));
+        Assert.All(result.Cells, c => Assert.True(c.Permission.Allowed));
     }
 
     /// <summary>混选不适用对象不能拿一个 Plant 元件的值冒充共同属性。</summary>
@@ -138,7 +138,7 @@ public sealed class PnPropertyTests
         var ordinary = new PnObjectProperties("CAD", "非 Plant 对象", Specs.Select(s =>
             new PnPropertyCell(s, FastPropertyValue.Missing(), PnEditPermission.ReadOnly("非 Plant"))).ToArray());
         var result = PnPropertyPolicy.Merge(Specs, [Object(), ordinary]);
-        Assert.All(result.Cells, c => Assert.Equal("—", c.Value.Display));
+        Assert.All(result.Cells, c => Assert.Equal("", c.Value.Display));
         Assert.Contains("多种对象", result.Header);
     }
 
@@ -147,10 +147,10 @@ public sealed class PnPropertyTests
     public void MissingAndSdkFailureRemainDifferentStates()
     {
         var cells = Object().Cells.ToArray();
-        cells[0] = cells[0] with { Value = FastPropertyValue.Missing("不含 Size"), Permission = PnEditPermission.ReadOnly("缺失") };
+        cells[0] = cells[0] with { Value = FastPropertyValue.AbsentProperty("不含 Size"), Permission = PnEditPermission.ReadOnly("缺失") };
         cells[2] = cells[2] with { Value = FastPropertyValue.Error("SDK ErrorStatus=InvalidInput"), Permission = PnEditPermission.ReadOnly("失败") };
         var result = PnPropertyPolicy.Merge(Specs, [Object() with { Cells = cells }]);
-        Assert.Equal("—", result.Cells[0].Value.Display);
+        Assert.Equal("--", result.Cells[0].Value.Display);
         Assert.Equal("读取失败", result.Cells[2].Value.Display);
         Assert.Contains("InvalidInput", result.Cells[2].Value.Detail);
         Assert.Equal("HV-1001", result.Cells[1].Value.Display);
@@ -163,7 +163,7 @@ public sealed class PnPropertyTests
         var result = PnPropertyPolicy.Merge(Specs, []);
         Assert.Equal(0, result.Count); Assert.Equal(3, result.Cells.Count);
         Assert.Equal(Specs, result.Cells.Select(c => c.Spec));
-        Assert.All(result.Cells, c => { Assert.Equal("—", c.Value.Display); Assert.False(c.Permission.Allowed); });
+        Assert.All(result.Cells, c => { Assert.Equal("", c.Value.Display); Assert.False(c.Permission.Allowed); });
     }
 
     /// <summary>行数、身份或修订不一致不能组合成新表。</summary>
