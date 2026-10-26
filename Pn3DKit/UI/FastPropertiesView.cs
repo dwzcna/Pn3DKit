@@ -55,8 +55,8 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         root.Children.Add(summary);
 
         var header = Columns();
-        var propertyName = Text("Pn属性", new Thickness(9, 7, 6, 7)); propertyName.FontWeight = FontWeights.SemiBold;
-        var valueName = Text("值", new Thickness(9, 7, 6, 7)); valueName.FontWeight = FontWeights.SemiBold;
+        var propertyName = Text("Pn属性", new Thickness(9, 3, 6, 3)); propertyName.FontWeight = FontWeights.SemiBold;
+        var valueName = Text("值", new Thickness(9, 3, 6, 3)); valueName.FontWeight = FontWeights.SemiBold;
         header.Children.Add(propertyName); Grid.SetColumn(valueName, 1); header.Children.Add(valueName);
         var heading = Surface(header); heading.SetResourceReference(BackgroundProperty, "PanelHeader");
         Grid.SetRow(heading, 1); root.Children.Add(heading);
@@ -155,7 +155,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     private void AddRow(string name)
     {
         SuspendEditing();
-        var input = CellBox(); var value = CellBox(); value.IsReadOnly = true; value.Text = "—";
+        var input = CellBox(); var value = CellBox(valueCell: true); value.IsReadOnly = true; value.Text = "—";
         var grid = Columns(); grid.Children.Add(input); Grid.SetColumn(value, 1); grid.Children.Add(value);
         var split = new Border { BorderThickness = new Thickness(1, 0, 0, 0), IsHitTestVisible = false };
         split.SetResourceReference(Border.BorderBrushProperty, "PanelBorder"); Grid.SetColumn(split, 1); grid.Children.Add(split);
@@ -256,9 +256,10 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     /// <summary>面板自身使用蓝灰／灰白层次，原生边框停靠仍由 CAD 管理。</summary>
     internal void SetTheme(bool dark)
     {
-        string[] keys = ["PanelBackground", "PanelSurface", "PanelForeground", "PanelMuted", "PanelBorder", "PanelHeader", "PanelSelection"];
-        string[] colors = dark ? ["#384252", "#3E4959", "#EDF1F6", "#C1CAD6", "#505D70", "#2D3644", "#6686AB"]
-            : ["#EDF0F4", "#F9FAFC", "#263244", "#59697D", "#CBD3DD", "#DEE4EC", "#A8C8E8"];
+        string[] keys = ["PanelBackground", "PanelSurface", "PanelForeground", "PanelMuted", "PanelBorder", "PanelHeader", "PanelSelection",
+            "PanelReadOnlyBackground", "PanelReadOnlyForeground"];
+        string[] colors = dark ? ["#384252", "#3E4959", "#EDF1F6", "#C1CAD6", "#505D70", "#2D3644", "#6686AB", "#354050", "#9FA9B7"]
+            : ["#EDF0F4", "#F9FAFC", "#263244", "#59697D", "#CBD3DD", "#DEE4EC", "#A8C8E8", "#E6E9EE", "#737C88"];
         for (int i = 0; i < keys.Length; i++)
         {
             var brush = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(colors[i]));
@@ -268,17 +269,36 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
 
     private static Grid Columns()
     {
-        var grid = new Grid { MinHeight = 32 };
+        var grid = new Grid { MinHeight = 24 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         return grid;
     }
-    private static WpfTextBox CellBox()
+    /// <summary>创建紧凑属性格；值格仅改变只读外观，仍启用复制、焦点及 Tooltip。</summary>
+    /// <param name="valueCell">值列使用 IsReadOnly 样式触发器，属性列始终采用正常画刷。</param>
+    /// <returns>仅在所属 WPF UI 线程使用的单行文本格。</returns>
+    private static WpfTextBox CellBox(bool valueCell = false)
     {
-        var box = new WpfTextBox { Padding = new Thickness(8, 6, 6, 6), BorderThickness = new Thickness(0),
+        var box = new WpfTextBox { Padding = new Thickness(8, 3, 6, 3), BorderThickness = new Thickness(0),
             VerticalContentAlignment = VerticalAlignment.Center, IsReadOnlyCaretVisible = true,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, MinWidth = 0 };
-        box.SetResourceReference(BackgroundProperty, "PanelSurface"); box.SetResourceReference(ForegroundProperty, "PanelForeground");
+        if (valueCell)
+        {
+            // 正常画刷放入样式，避免局部动态资源的优先级覆盖只读触发器。
+            var style = new Style(typeof(WpfTextBox));
+            style.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("PanelSurface")));
+            style.Setters.Add(new Setter(ForegroundProperty, new DynamicResourceExtension("PanelForeground")));
+            var readOnly = new Trigger { Property = WpfTextBox.IsReadOnlyProperty, Value = true };
+            readOnly.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("PanelReadOnlyBackground")));
+            readOnly.Setters.Add(new Setter(ForegroundProperty, new DynamicResourceExtension("PanelReadOnlyForeground")));
+            style.Triggers.Add(readOnly);
+            box.Style = style;
+        }
+        else
+        {
+            box.SetResourceReference(BackgroundProperty, "PanelSurface");
+            box.SetResourceReference(ForegroundProperty, "PanelForeground");
+        }
         box.SetResourceReference(WpfTextBox.CaretBrushProperty, "PanelForeground"); box.SetResourceReference(WpfTextBox.SelectionBrushProperty, "PanelSelection");
         ToolTipService.SetShowDuration(box, 60000); return box;
     }

@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.25 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.25
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.26 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.26
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.25 -OutputDirectory artifacts/release/0.1.25
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.26 -OutputDirectory artifacts/release/0.1.26
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils 中的同一份源码，不引用或加载 Autodesk。SDK 适配层通过插件编译、命令元数据检查及授权后的实际 CAD 验收验证。
@@ -68,7 +68,7 @@ $sdk = ./build/Get-PlantSdk.ps1
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.25/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.26/。
 
 ## 当前实现与验收
 
@@ -76,7 +76,7 @@ $sdk = ./build/Get-PlantSdk.ps1
 
 已测试：离线策略、Fake Host 生命周期、默认否、冲突、数据行别名、日志、保存等待及异常收尾；插件通过双配置构建和九条命令元数据校验，实际结果见 Changlog.md 和 validation 日志。
 
-未完成：CAD 实机验收仍待执行；按本次用户授权，0.1.25 验证后普通推送并发布。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
+未完成：CAD 实机验收仍待执行；本轮 0.1.26 仅验证并本地提交，不推送、不发布。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 
@@ -96,6 +96,6 @@ FastPlantPropertiesAccess 直接读取 TargetObject 对应的数据行列，不�
 
 每次值提交通过共用 BatchRunGate 持有互斥，通过 AutoCadHost.InLockedDocumentAsync 在主线程应用上下文锁定文档，不启动命令，保留 PICKFIRST 和面板焦点。写前重新读取权限、原值、数据关联、完整身份、选择和路径修订；最后一刻重复校验。DataLinksManager.SetProperties 仅写所选对象自身列，事务后立即回读。Tag 在写前使用候选注册键排除占用，写后核对登记归属。失败保留 SDK 状态及可读实际值，不假定回滚；不调用自动编号、获取模式切换、全局 AcceptChanges、QSAVE 或直接数据库写入。Regen 和 DWG／Plant 缓存撤销效果仍待实机。
 
-FastPropertiesView 沿用蓝灰／灰白动态画刷、原生停靠和高 DPI，值只读时仍可选中复制，Tooltip 显示原因和全文。纯 WPF 离屏宿主采用合成数据，不加载 Autodesk。仍为九条命令、单 DLL。0.1.25 保留继承字段修复，提交改为应用上下文文档锁；Enter 保持焦点及选择，Tab 在表内导航。各轮验证后本地提交，按本次授权在 0.1.25 完成后普通推送并创建正式 Release。
+FastPropertiesView 沿用蓝灰／灰白动态画刷、原生停靠和高 DPI。值列使用独立样式，正常背景／文字置于 Setter，IsReadOnly 触发器切换专用灰色动态资源，避免局部值遮蔽；保持 IsEnabled=true，保留焦点、选择复制和 Tooltip。无有效票据等所有实际只读状态均灰显，恢复许可及深浅主题切换自动更新。表格最小行高 24 DIP，上下内边距 3 DIP，字号仍为 12，自动高度避免裁切。纯 WPF 离屏宿主使用合成数据，不加载 Autodesk；九条命令、单 DLL。0.1.26 仅调整显示，保留既有提交和身份校验，不推送或发布。
 
 Pn3DKit.Tests 启用纯 WPF 并链接 FastPropertiesView，以独立 STA 路由事件验证 Comment 许可、空值、焦点保留请求、Enter／失焦／Esc、默认空行及旧快照失效。测试不打开窗口、不设置系统焦点、不加载 Autodesk；WPF 离屏预览不能代替原生 PaletteSet 和真实 SDK 验收。
