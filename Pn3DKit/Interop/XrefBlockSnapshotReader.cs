@@ -25,20 +25,9 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
         internal Dictionary<string, byte[]> Payloads { get; } = new(StringComparer.Ordinal);
     }
     private readonly Dictionary<ObjectId, Node> _objects = [];
+    private readonly HashSet<ObjectId> _active = [];
     private readonly Dictionary<string, Node> _all = new(StringComparer.Ordinal);
     private readonly Transaction _transaction = database.TransactionManager.StartOpenCloseTransaction();
-    private static readonly HashSet<string> KnownEntities = new(StringComparer.Ordinal)
-    {
-        "AcDbLine", "AcDbRay", "AcDbXline", "AcDbArc", "AcDbCircle", "AcDbEllipse", "AcDbPolyline",
-        "AcDb2dPolyline", "AcDb3dPolyline", "AcDb2dVertex", "AcDb3dPolylineVertex", "AcDbSpline",
-        "AcDbText", "AcDbMText", "AcDbAttributeDefinition", "AcDbAttribute", "AcDbBlockReference",
-        "AcDbMInsertBlock", "AcDbHatch", "AcDbSolid", "AcDbTrace", "AcDbFace", "AcDbPoint",
-        "AcDbLeader", "AcDbMLeader", "AcDbAlignedDimension", "AcDbRotatedDimension",
-        "AcDbRadialDimension", "AcDbDiametricDimension", "AcDb2LineAngularDimension",
-        "AcDb3PointAngularDimension", "AcDbOrdinateDimension", "AcDbRadialDimensionLarge",
-        "AcDbArcDimension", "AcDbPolyFaceMesh", "AcDbPolyFaceMeshVertex", "AcDbFaceRecord",
-        "AcDbPolygonMesh", "AcDbPolygonMeshVertex", "AcDbSubDMesh", "AcDbWipeout"
-    };
     private static readonly HashSet<string> KnownResources = new(StringComparer.Ordinal)
     {
         "AcDbLayerTableRecord", "AcDbLinetypeTableRecord", "AcDbTextStyleTableRecord",
@@ -68,46 +57,44 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
         return new(root.Id, nodes, issues.Distinct(StringComparer.Ordinal).ToArray());
     }
 
-    /// <summary>只在 ForRead 事务中定位，先登记再递归以保留环和共享资源。</summary>
+    /// <summary>只读定位并缓存二维内容；循环、动态及未知类型明确标记不完整，不触发求值。</summary>
     private Node Visit(ObjectId id)
     {
         ensure();
         if (id.IsNull || !id.IsValid || id.IsErased) throw new InvalidOperationException("内容关联已失效或删除。");
-        if (_objects.TryGetValue(id, out var found)) return found;
+        if (_objects.TryGetValue(id, out var found))
+        {
+            if (_active.Contains(id)) found.Issues.Add("循环依赖无法完整比较：" + found.Kind);
+            return found;
+        }
         var item = _transaction.GetObject(id, OpenMode.ForRead);
         string type = item.GetRXClass().Name;
-        var node = New(type); _objects.Add(id, node);
+        var node = New(type); _objects.Add(id, node); _active.Add(id);
         try
         {
             if (item is ProxyEntity or ProxyObject)
             {
-                string original = item is ProxyEntity proxyEntity ? proxyEntity.OriginalClassName : ((ProxyObject)item).OriginalClassName;
-                node.Issues.Add("代理对象无法完整分析：" + type + "；原类：" + original);
+                string original = item is ProxyEntity proxy ? proxy.OriginalClassName : ((ProxyObject)item).OriginalClassName;
+                node.Issues.Add("代理对象无法完整比较：" + type + "；原类：" + original);
                 return node;
             }
+            if (item is BlockReference { IsDynamicBlock: true })
+            { node.Issues.Add("动态块引用本轮不比较：" + type); return node; }
+            if (item is BlockTableRecord { IsDynamicBlock: true })
+            { node.Issues.Add("动态块定义本轮不比较，不读取参数／动作或触发求值。"); return node; }
             if (item is BlockTableRecord block) CaptureBlock(node, block);
             else if (item is DBDictionary dictionary)
-            {
                 foreach (DBDictionaryEntry entry in dictionary)
                 { ensure(); Link(node, "字典/" + entry.Key, entry.Value); }
-            }
             else if (item is Xrecord record) CaptureXrecord(node, record);
             else
             {
+                if (item is Entity && !XrefBlockContentScope.SupportsEntity(type)
+                    || item is not Entity && item is not SymbolTableRecord && !KnownResources.Contains(type))
+                { node.Issues.Add("本轮二维比较不支持或未完整解释的类型：" + type); return node; }
                 if (item is Entity entity) CaptureDisplay(node, entity);
                 if (item is SymbolTableRecord symbolContent) CaptureSymbol(node, symbolContent);
-                else if (item is Solid3d or Autodesk.AutoCAD.DatabaseServices.Region or Autodesk.AutoCAD.DatabaseServices.Surface)
-                    XrefBrepReader.Capture((Entity)item, node, New, Link, ensure);
-                else if (item is Assoc2dConstraintGroup constraint) CaptureConstraints(node, constraint);
-                else if (item is SubDMesh subDMesh) CaptureMesh(node, subDMesh);
-                else
-                {
-                    if (!KnownEntities.Contains(type) && !KnownResources.Contains(type))
-                        node.Issues.Add("尚未确认此原生类型的全部字段语义：" + type
-                            + (type.Contains("Block", StringComparison.Ordinal) || type.Contains("Eval", StringComparison.Ordinal)
-                                ? "；动态节点内部编号未冒充内容，需 SDK 语义支持。" : ""));
-                    CaptureFiler(node, item);
-                }
+                else CaptureFiler(node, item);
                 if (item is SymbolTableRecord symbol)
                 {
                     node.Fields["资源名"] = SymbolName(symbol, node);
@@ -115,23 +102,16 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
                 }
                 if (item is BlockReference reference) CaptureReference(node, reference);
                 if (item is Polyline2d polyline)
-                    foreach (ObjectId vertex in polyline) Link(node, "顶点/" + node.Edges.Count.ToString("D8", CultureInfo.InvariantCulture), vertex);
-                if (item is Polyline3d spatial)
-                    foreach (ObjectId vertex in spatial) Link(node, "顶点/" + node.Edges.Count.ToString("D8", CultureInfo.InvariantCulture), vertex);
-                if (item is PolyFaceMesh or PolygonMesh)
-                    node.Issues.Add("旧式网格的有序记录已读取，内部索引和子实体外观尚未完整规范化。");
-                if (item is PolyFaceMesh mesh)
-                    foreach (ObjectId vertex in mesh) Link(node, "网格记录/" + node.Edges.Count.ToString("D8", CultureInfo.InvariantCulture), vertex);
-                if (item is PolygonMesh polygon)
-                    foreach (ObjectId vertex in polygon) Link(node, "网格记录/" + node.Edges.Count.ToString("D8", CultureInfo.InvariantCulture), vertex);
+                    foreach (ObjectId vertex in polyline)
+                        Link(node, "顶点/" + node.Edges.Count.ToString("D8", CultureInfo.InvariantCulture), vertex);
                 if (item is Dimension dimension && !dimension.DimBlockId.IsNull)
                     Link(node, "标注图形", dimension.DimBlockId);
                 if (item is not SymbolTableRecord && !item.OwnerId.IsNull
-                    && _transaction.GetObject(item.OwnerId, OpenMode.ForRead) is DBDictionary ownerDictionary)
+                    && _transaction.GetObject(item.OwnerId, OpenMode.ForRead) is DBDictionary owner)
                 {
-                    string stored = ownerDictionary.NameAt(item.ObjectId);
-                    string? original = XrefBlockComparison.RemoveSourceNamespace(stored, sourceNamespaces ?? []);
-                    if (original == null || original.Contains('|')) node.Issues.Add("资源键的原始命名空间无法可靠还原：" + stored);
+                    string stored = owner.NameAt(item.ObjectId);
+                    string? original = XrefBlockNames.RemoveSourceNamespace(stored, sourceNamespaces ?? []);
+                    if (original == null || original.Contains('|')) node.Issues.Add("资源键的原始命名空间无法还原：" + stored);
                     node.Fields["资源键"] = (original ?? stored).ToUpperInvariant();
                 }
                 CaptureReadableFields(node, item);
@@ -140,9 +120,11 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
             CaptureXdata(node, item);
         }
         catch (OperationCanceledException) { throw; }
+        catch (Pn3DKit.Services.XrefBlockLogException) { throw; }
         catch (Pn3DKit.Commands.XrefCheckStoppedException) { throw; }
         catch (CadException ex) when (ex.ErrorStatus == ErrorStatus.UserBreak) { throw new OperationCanceledException("用户取消。", ex); }
         catch (System.Exception ex) { node.Issues.Add(XrefBlockCadCatalog.Detail(Unwrap(ex))); }
+        finally { _active.Remove(id); }
         return node;
     }
 
@@ -156,7 +138,7 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
     /// <summary>资源名称使用符号名称规则；不能可靠恢复的依赖命名空间不猜测。</summary>
     private string SymbolName(SymbolTableRecord symbol, Node node)
     {
-        string? original = XrefBlockComparison.RemoveSourceNamespace(symbol.Name, sourceNamespaces ?? []);
+        string? original = XrefBlockNames.RemoveSourceNamespace(symbol.Name, sourceNamespaces ?? []);
         if (original == null || original.Contains('|'))
         {
             node.Issues.Add("资源原始命名空间无法可靠还原：" + symbol.Name);
@@ -186,8 +168,8 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
         node.Fields["缩放规则"] = block.BlockScaling.ToString();
         node.Fields["注释性"] = block.Annotative.ToString();
         node.Fields["动态定义"] = block.IsDynamicBlock.ToString();
-        if (block.IsDynamicBlock && block.ExtensionDictionary.IsNull)
-            node.Issues.Add("动态定义缺少可读取的参数／动作关联数据，不能仅凭可见几何判定一致。");
+        if (block.IsDynamicBlock)
+        { node.Issues.Add("动态块定义本轮不比较，不读取动作／可见性或触发动态求值。"); return; }
         var entities = new List<(ObjectId Id, Entity Entity)>();
         foreach (ObjectId id in block)
         {
@@ -213,7 +195,9 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
             obscures[entity.Id] = entity.Entity is Hatch or Wipeout or Solid or MText
                 || !alpha.IsByLayer && !alpha.IsByBlock && alpha.Alpha < 255;
         }
-        bool unknownOrder = false;
+        // 同显示且无遮挡／显式排序时无需两两检查，避免普通线框块的平方级开销。
+        if (explicitlySorted.Count == 0 && !obscures.Values.Any(x => x)
+            && entities.Select(e => (e.Entity.LayerId, e.Entity.LinetypeId, paints[e.Id])).Distinct().Take(2).Count() <= 1) return;
         for (int i = 0; i < entities.Count; i++)
         for (int j = i + 1; j < entities.Count; j++)
         {
@@ -235,10 +219,10 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
                 relation.Edges.Add(new("后绘制", Visit(one < two ? second.Id : first.Id).Id));
                 node.Edges.Add(new("绘制关系", relation.Id));
             }
-            else if (!unknownOrder)
+            else
             {
                 node.Issues.Add("默认绘制次序可能影响遮挡或不同显示属性；无法可靠排除其显示影响。");
-                unknownOrder = true;
+                return;
             }
         }
         // 未参与显式显示约束的实体仍是无序多重集，不混入 SORTENTS 或原创建序列。
@@ -318,14 +302,14 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
             catch (System.Exception ex)
             {
                 var actual = Unwrap(ex);
-                if (actual is OperationCanceledException or Pn3DKit.Commands.XrefCheckStoppedException) throw actual;
+                if (actual is OperationCanceledException or Pn3DKit.Commands.XrefCheckStoppedException or Pn3DKit.Services.XrefBlockLogException) throw actual;
                 if (actual is CadException { ErrorStatus: ErrorStatus.UserBreak }) throw new OperationCanceledException("用户取消。", actual);
                 node.Issues.Add(name + "：" + XrefBlockCadCatalog.Detail(actual));
             }
         }
     }
 
-    /// <summary>三维语义读取同样保留实体显示属性及资源。</summary>
+    /// <summary>二维实体保留显示属性及必要资源。</summary>
     private void CaptureDisplay(Node node, Entity entity)
     {
         using var color = entity.Color;
@@ -343,63 +327,12 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
     /// <summary>保留定义内部的引用名称、变换和属性，动态引用不通过重置或求值重建。</summary>
     private void CaptureReference(Node node, BlockReference reference)
     {
-        ObjectId definition = reference.IsDynamicBlock ? reference.DynamicBlockTableRecord : reference.BlockTableRecord;
+        ObjectId definition = reference.BlockTableRecord;
         var block = (BlockTableRecord)_transaction.GetObject(definition, OpenMode.ForRead);
         node.Fields["引用块名"] = block.IsAnonymous ? "〈所属匿名定义〉" : SymbolName(block, node);
         node.Fields["变换"] = Scalar(reference.BlockTransform);
         Link(node, "引用定义", definition);
         foreach (ObjectId attribute in reference.AttributeCollection) Link(node, "实例属性", attribute);
-        if (reference.IsDynamicBlock)
-        {
-            foreach (DynamicBlockReferenceProperty property in reference.DynamicBlockReferencePropertyCollection)
-            {
-                ensure();
-                node.Fields["动态属性/" + property.PropertyName] = Scalar(property.Value);
-            }
-            if (!reference.AnonymousBlockTableRecord.IsNull)
-                Link(node, "内部动态显示定义", reference.AnonymousBlockTableRecord);
-        }
-    }
-
-    /// <summary>网格索引转换为有向角环和顶点关联，内部顶点编号不冒充几何内容。</summary>
-    private void CaptureMesh(Node node, SubDMesh mesh)
-    {
-        using var vertices = mesh.Vertices;
-        var normals = mesh.VertexNormalArray;
-        using var textures = mesh.VertexTextureArray;
-        var colors = mesh.VertexColorArray;
-        var nodes = new List<Node>();
-        for (int i = 0; i < vertices.Count; i++)
-        {
-            ensure();
-            var vertex = New("网格顶点");
-            vertex.Fields["坐标"] = Scalar(vertices[i]);
-            if (normals.Count == vertices.Count) vertex.Fields["法线"] = Scalar(normals[i]);
-            if (textures.Count == vertices.Count) vertex.Fields["纹理坐标"] = Scalar(textures[i]);
-            if (colors.Length == vertices.Count) vertex.Fields["颜色"] = Scalar(colors[i]);
-            nodes.Add(vertex); node.Edges.Add(new("网格顶点", vertex.Id));
-        }
-        var faces = mesh.FaceArray;
-        int cursor = 0;
-        while (cursor < faces.Count)
-        {
-            ensure();
-            int count = faces[cursor++];
-            if (count < 3 || count > faces.Count - cursor) throw new InvalidOperationException("网格面索引数量无效。");
-            var face = New("网格面"); node.Edges.Add(new("网格面", face.Id));
-            var corners = new List<Node>();
-            for (int i = 0; i < count; i++)
-            {
-                int index = faces[cursor++];
-                if (index < 0 || index >= nodes.Count) throw new InvalidOperationException("网格顶点索引越界。");
-                var corner = New("网格面角"); corners.Add(corner);
-                face.Edges.Add(new("面角", corner.Id)); corner.Edges.Add(new("顶点", nodes[index].Id));
-            }
-            for (int i = 0; i < corners.Count; i++)
-                corners[i].Edges.Add(new("下一角", corners[(i + 1) % corners.Count].Id));
-        }
-        node.Fields["细分级别"] = Scalar(mesh.SmoothLevel);
-        node.Issues.Add("网格顶点、面连接及可读逐顶点数据已读取；子实体棱折／材质映射尚未完整规范化。");
     }
 
     /// <summary>保留颜色方法和可读取色册信息；ByLayer／ByBlock 不依赖未定义的 RGB 缓存。</summary>
@@ -444,7 +377,7 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
                     scalar = SymbolName(symbol, node);
                 if (resourceName != null && value is string named && named == resourceName)
                 {
-                    string? original = XrefBlockComparison.RemoveSourceNamespace(named, sourceNamespaces ?? []);
+                    string? original = XrefBlockNames.RemoveSourceNamespace(named, sourceNamespaces ?? []);
                     if (original == null || original.Contains('|')) node.Issues.Add("资源名称无法可靠还原：" + named);
                     scalar = (original ?? named).ToUpperInvariant();
                 }
@@ -462,7 +395,8 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
                         node.Payloads[key] = File.ReadAllBytes(path);
                         scalar = "〈材质资源内容〉";
                     }
-                    catch (System.Exception ex) when (ex is not CadException { ErrorStatus: ErrorStatus.UserBreak })
+                    catch (System.Exception ex) when (ex is not OperationCanceledException and not Pn3DKit.Commands.XrefCheckStoppedException
+                        and not Pn3DKit.Services.XrefBlockLogException && ex is not CadException { ErrorStatus: ErrorStatus.UserBreak })
                     { node.Issues.Add("材质资源无法读取：" + XrefBlockCadCatalog.Detail(ex)); scalar = "〈未读材质资源〉"; }
                 }
                 node.Fields[key] = scalar;
@@ -531,43 +465,10 @@ internal sealed class XrefBlockSnapshotReader(Database database, Action ensure, 
                 node.Payloads[key] = File.ReadAllBytes(path);
                 node.Fields[key] = "〈资源内容，逐字节比较〉";
             }
-            catch (System.Exception ex) when (ex is not OperationCanceledException
-                && ex is not CadException { ErrorStatus: ErrorStatus.UserBreak })
+            catch (System.Exception ex) when (ex is not OperationCanceledException and not Pn3DKit.Commands.XrefCheckStoppedException
+                and not Pn3DKit.Services.XrefBlockLogException && ex is not CadException { ErrorStatus: ErrorStatus.UserBreak })
             { node.Issues.Add("必要字体无法读取：" + file + "；" + XrefBlockCadCatalog.Detail(ex)); }
         }
-    }
-
-    /// <summary>通过公开约束图读取关联，节点 ID 仅用于连接，不进入比较字段。</summary>
-    private void CaptureConstraints(Node node, Assoc2dConstraintGroup group)
-    {
-        using var workPlane = group.WorkPlane;
-        XrefBrepReader.Geometry(workPlane, node, "约束平面", ensure);
-        var nodes = new Dictionary<uint, Node>();
-        foreach (var geometry in group.ConstrainedGeometries)
-        {
-            ensure();
-            var target = New(geometry.GetType().Name); nodes.Add(geometry.NodeId, target);
-            node.Edges.Add(new("约束几何", target.Id));
-            Link(target, "关联几何", geometry.GeomDependencyId);
-            XrefBrepReader.Geometry(geometry, target, "几何参数", ensure);
-            // 子实体路径的临时索引不是稳定几何语义；未能完整解释时不判为一致。
-            target.Issues.Add("约束子实体路径尚未完整规范化，已读取几何关联。");
-        }
-        foreach (var constraint in group.Constraints)
-        {
-            ensure();
-            var target = New(constraint.GetType().Name);
-            node.Edges.Add(new("约束", target.Id));
-            target.Fields["启用"] = constraint.IsEnabled.ToString();
-            target.Fields["内部"] = constraint.IsInternal.ToString();
-            target.Fields["隐含"] = constraint.IsImplied.ToString();
-            target.Fields["激活"] = constraint.IsActive.ToString();
-            foreach (var geometry in constraint.ConnectedGeometries)
-                if (nodes.TryGetValue(geometry.NodeId, out var related)) target.Edges.Add(new("连接几何", related.Id));
-                else target.Issues.Add("约束连接到了未读取的节点。");
-            target.Issues.Add("约束特有参数未完整解释：" + constraint.GetType().Name);
-        }
-        foreach (ObjectId dependency in group.GetDependencies(true, true)) Link(node, "约束依赖", dependency);
     }
 
     /// <summary>严格的标量序列化，不用 SDK ToString 的显示精度代替几何。</summary>

@@ -1,285 +1,165 @@
-using System.Text;
+using System.Globalization;
 using Pn3DKit.Models;
 using Pn3DKit.Services;
 using Pn3DKit.Utils;
 
 namespace Pn3DKit.Tests;
 
-/// <summary>离线检查内容归组、严格图等价、外参范围和报告；不加载 Autodesk 或操作 DWG。</summary>
+/// <summary>验证名称统计、来源编号与报告，不保留已经移除的内容比较测试。</summary>
 public sealed class XrefBlockTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "Pn3DKit.XrefBlockTests", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "Pn3DKit.XrefStatistics", Guid.NewGuid().ToString("N"));
 
-    /// <summary>构造无身份依赖的命名定义，默认包含一个圆及属性定义。</summary>
-    private static XrefBlockDefinition Definition(string file, string radius = "10", string value = "V",
-        bool host = false, string name = "Valve", string[]? issues = null, bool used = true, string? error = null,
-        string[]? chains = null)
-    {
-        var graph = Graph("root",
-            Node("root", "块", [("基点", "0,0,0"), ("单位", "Millimeters")], [new("实体", "circle"), new("实体", "att")]),
-            Node("circle", "圆", [("半径", radius)]),
-            Node("att", "属性定义", [("属性名", "TAG"), ("默认值", value)]));
-        return new(name, new(file, file, host ? "宿主当前数据" : "磁盘只读数据", host, chains ?? [file]),
-            graph with { Issues = issues ?? [], ReadError = error }, 1, used);
-    }
+    /// <summary>构造纯内存来源，编号由用例显式指定，不依赖 CAD。</summary>
+    private static XrefBlockSource Source(int number, params string[] chains) =>
+        new("来源" + number, "图纸" + number + ".dwg", "宿主当前数据", number == 1, chains, DwgNo: number);
+    /// <summary>使用实参构造名称清单，保留重复条目以验证来源去重。</summary>
+    private static XrefBlockInventory Inventory(params XrefBlockNameEntry[] entries) =>
+        new(entries, entries.Select(e => e.Source).DistinctBy(s => s.DwgNo).ToArray(), true);
 
-    /// <summary>使用真实名称筛选及按需回调运行已有快照，测试不加载 SDK。</summary>
-    private static XrefBlockBatchResult CompareDefinitions(IReadOnlyList<XrefBlockDefinition> definitions,
-        bool complete, Action ensure, Action<XrefBlockResult> append, Action<int, int> progress)
-    {
-        var entries = definitions.Select((d, i) => new XrefBlockNameEntry(i.ToString(), d.Name, d.Source, false)).ToArray();
-        var selection = XrefBlockBatch.Select(new(entries, definitions.Select(d => d.Source).ToArray(), complete), ensure);
-        return XrefBlockBatch.Compare(selection, e => definitions[int.Parse(e.Key)], () => complete, ensure, append, progress);
-    }
-
-    /// <summary>构造精确字段，重复边不去重。</summary>
-    private static BlockContentNode Node(string id, string kind, (string, string)[]? fields = null, BlockContentEdge[]? edges = null) =>
-        new(id, kind, (fields ?? []).ToDictionary(x => x.Item1, x => x.Item2), edges ?? []);
-
-    /// <summary>图中 Id 只用于关联，便于验证重编号、循环和共享关系。</summary>
-    private static BlockContentSnapshot Graph(string root, params BlockContentNode[] nodes) =>
-        new(root, nodes.ToDictionary(n => n.Id), []);
-
-    /// <summary>A／a1／a2 三来源按两种内容分组，主图和 a2 相同，a1 不同。</summary>
+    /// <summary>用户要求的斜线编号、不同来源数量及单来源名称均完整输出。</summary>
     [Fact]
-    public void ThreeDrawingCaseGroupsEqualDefinitionsAndNamesDifferences()
+    public void AllNamesIncludeSingleSourcesAndDistinctDrawingCounts()
     {
-        var result = XrefBlockComparison.Compare("Valve",
-            [Definition("a1.dwg", "12", "VALVE"), Definition("a2.dwg"), Definition("A.dwg", host: true)], true);
-        Assert.Equal(XrefBlockStatus.Conflict, result.Status);
-        Assert.True(result.Complete);
-        Assert.Equal(new[] { "A.dwg", "a2.dwg" }, result.Groups[0].Definitions.Select(d => d.Source.Drawing));
-        Assert.Equal("a1.dwg", Assert.Single(result.Groups[1].Definitions).Source.Drawing);
-        Assert.Contains(result.Differences, d => d.Contains("半径") && d.Contains("10") && d.Contains("12"));
-        Assert.Contains(result.Differences, d => d.Contains("默认值") && d.Contains("VALVE"));
-        Assert.Contains("复用主图定义", result.Risk);
+        var inventory = Inventory(new XrefBlockNameEntry("xxx", Source(5), false), new("XXX", Source(2), false),
+            new("xxx", Source(1), false), new("xxx", Source(5), false), new("Pump", Source(2), false));
+        var statistics = XrefBlockNames.Summarize(inventory);
+        var row = statistics.Normal.Single(r => r.Name == "xxx");
+        Assert.Equal("1/2/5", row.DwgNo); Assert.Equal(3, row.DwgCount);
+        Assert.Equal("2", statistics.Normal.Single(r => r.Name == "Pump").DwgNo);
+        Assert.Empty(statistics.Anonymous);
     }
 
-    /// <summary>主图没有该块，外参冲突也必须显示，提示绑定顺序风险。</summary>
+    /// <summary>按编号数值排序，名称原文取最小编号来源；多链不增加图纸数量。</summary>
     [Fact]
-    public void ReferencesConflictWithoutHostDefinition()
+    public void NumericOrderAndOriginalCasingAreStable()
     {
-        var result = XrefBlockComparison.Compare("Valve", [Definition("a1.dwg"), Definition("a2.dwg", "12")], true);
-        Assert.Equal(XrefBlockStatus.Conflict, result.Status);
-        Assert.Contains("绑定顺序", result.Risk);
+        var statistics = XrefBlockNames.Summarize(Inventory(new XrefBlockNameEntry("valve", Source(10), false),
+            new("VALVE", Source(2, "A → B1", "A → B2"), false), new("Valve", Source(1), false)));
+        var row = Assert.Single(statistics.Normal);
+        Assert.Equal("Valve", row.Name); Assert.Equal("1/2/10", row.DwgNo); Assert.Equal(3, row.DwgCount);
     }
 
-    /// <summary>未插入的主图定义仍参与冲突，使用状态不改变内容。</summary>
+    /// <summary>匿名身份来自 SDK 标志，同名的两种标志分别统计，不按星号猜测。</summary>
     [Fact]
-    public void UnusedHostDefinitionStillParticipates()
+    public void AnonymousAndNormalNamesUseSdkFlag()
     {
-        var unused = Definition("A.dwg", host: true, used: false) with { DirectReferences = 0 };
-        var result = XrefBlockComparison.Compare("Valve", [unused, Definition("a1.dwg", value: "DIFFERENT")], true);
-        Assert.Equal(XrefBlockStatus.Conflict, result.Status);
-        Assert.Contains("未使用定义", result.Groups[0].Definitions[0].Usage);
+        var statistics = XrefBlockNames.Summarize(Inventory(new XrefBlockNameEntry("*U1", Source(1), true),
+            new("*u1", Source(2), true), new("*U1", Source(5), false), new("Odd", Source(1), true)));
+        Assert.Equal(2, statistics.Anonymous.Count);
+        Assert.Equal("1/2", statistics.Anonymous.Single(r => r.Name == "*U1").DwgNo);
+        Assert.Equal("5", Assert.Single(statistics.Normal).DwgNo);
     }
 
-    /// <summary>只有一个完整来源属于无需比较，多个完整相同来源属于一致。</summary>
-    [Theory]
-    [InlineData(1, XrefBlockStatus.Unique)]
-    [InlineData(3, XrefBlockStatus.Consistent)]
-    public void UniqueAndConsistentAreDistinct(int count, XrefBlockStatus status)
-    {
-        var result = XrefBlockComparison.Compare("Valve", Enumerable.Range(0, count).Select(i => Definition(i + ".dwg")).ToArray(), true);
-        Assert.Equal(status, result.Status); Assert.True(result.Complete);
-        Assert.Single(result.Groups);
-    }
-
-    /// <summary>已知冲突优先，同时保留第三来源未完整的事实，不能归入一致组。</summary>
+    /// <summary>CAD 名称身份不随当前文化变化，行按名称稳定排列。</summary>
     [Fact]
-    public void KnownConflictAndUnknownSourceRemainIndependent()
+    public void NamesUseOrdinalCaseInsensitiveIdentity()
     {
-        var result = XrefBlockComparison.Compare("Valve",
-            [Definition("A.dwg", host: true), Definition("a1.dwg", "12"), Definition("proxy.dwg", issues: ["代理 AcDbProxyEntity"])], true);
-        Assert.Equal(XrefBlockStatus.Conflict, result.Status);
-        Assert.False(result.Complete); Assert.Equal(3, result.Groups.Count);
-        Assert.StartsWith("未完整", result.Groups[^1].Number);
-        Assert.Contains(result.Issues, s => s.Contains("代理"));
-    }
-
-    /// <summary>不完整、读取错误和范围缺失都不能判为一致或无需比较。</summary>
-    [Theory]
-    [InlineData(false, false, false, XrefBlockStatus.Incomplete)]
-    [InlineData(true, true, false, XrefBlockStatus.Incomplete)]
-    [InlineData(true, false, true, XrefBlockStatus.ReadError)]
-    public void UnknownDoesNotMeanEqual(bool scope, bool issue, bool error, XrefBlockStatus status)
-    {
-        var item = Definition("a.dwg", issues: issue ? ["动态节点参数未解释"] : [], error: error ? "SDK ErrorStatus=FileNotFound" : null);
-        var result = XrefBlockComparison.Compare("Valve", [item], scope);
-        Assert.Equal(status, result.Status); Assert.False(result.Complete);
-    }
-
-    /// <summary>主图与外参的文件身份、节点编号和实体创建顺序均不构成内容差异。</summary>
-    [Fact]
-    public void NodeIdsAndCreationOrderDoNotAffectEquality()
-    {
-        var a = Definition("A.dwg").Content;
-        var b = Graph("b", Node("p", "属性定义", [("属性名", "TAG"), ("默认值", "V")]),
-            Node("c", "圆", [("半径", "10")]),
-            Node("b", "块", [("单位", "Millimeters"), ("基点", "0,0,0")], [new("实体", "p"), new("实体", "c")]));
-        Assert.True(XrefBlockComparison.Equivalent(a, b));
-        Assert.Equal(XrefBlockComparison.Fingerprint(a), XrefBlockComparison.Fingerprint(b));
-    }
-
-    /// <summary>即使哈希碰撞，内容不同仍会分成两个组。</summary>
-    [Fact]
-    public void FingerprintCollisionNeverProvesEquality()
-    {
-        var result = XrefBlockComparison.Compare("Valve",
-            [Definition("A.dwg"), Definition("b.dwg", "12")], true, fingerprint: _ => "故意碰撞");
-        Assert.Equal(XrefBlockStatus.Conflict, result.Status);
-        Assert.Equal(2, result.Groups.Count);
-    }
-
-    /// <summary>重复实体数量必须保留，不能把多重集当集合。</summary>
-    [Fact]
-    public void DuplicateEntitiesRemainSignificant()
-    {
-        var a = Graph("r", Node("r", "块", edges: [new("实体", "a"), new("实体", "a")]), Node("a", "圆"));
-        var b = Graph("r", Node("r", "块", edges: [new("实体", "a")]), Node("a", "圆"));
-        Assert.False(XrefBlockComparison.Equivalent(a, b));
-    }
-
-    /// <summary>父块名称和元数据相同，嵌套子块、资源或属性的任意变化都能传到根定义。</summary>
-    [Theory]
-    [InlineData("嵌套定义")]
-    [InlineData("图层")]
-    [InlineData("文字样式")]
-    [InlineData("动态参数")]
-    public void DependencyContentChangesReachParent(string relation)
-    {
-        var a = Graph("r", Node("r", "块", edges: [new(relation, "x")]), Node("x", relation, [("值", "1")]));
-        var b = Graph("s", Node("s", "块", edges: [new(relation, "y")]), Node("y", relation, [("值", "2")]));
-        Assert.False(XrefBlockComparison.Equivalent(a, b));
-        Assert.Contains(XrefBlockComparison.Differences(a, b), s => s.Contains("值"));
-    }
-
-    /// <summary>动态动作、约束及三维拓扑的关联编号可变化，连接方式和精确参数必须相同。</summary>
-    [Theory]
-    [InlineData("动态动作")]
-    [InlineData("约束节点")]
-    [InlineData("三维边")]
-    public void CyclicGraphsIgnoreInternalNumberingButKeepConnectivity(string kind)
-    {
-        var a = Graph("r", Node("r", "块", edges: [new("节点", "1"), new("节点", "2")]),
-            Node("1", kind, [("参数", "H")], [new("连接", "2")]), Node("2", kind, [("参数", "V")], [new("连接", "1")]));
-        var b = Graph("root", Node("root", "块", edges: [new("节点", "20"), new("节点", "10")]),
-            Node("10", kind, [("参数", "H")], [new("连接", "20")]), Node("20", kind, [("参数", "V")], [new("连接", "10")]));
-        Assert.True(XrefBlockComparison.Equivalent(a, b));
-        var changed = b with { Nodes = b.Nodes.ToDictionary(p => p.Key,
-            p => p.Key == "20" ? p.Value with { Edges = [new("连接", "20")] } : p.Value) };
-        Assert.False(XrefBlockComparison.Equivalent(a, changed));
-    }
-
-    /// <summary>相同节点度数和哈希仍不能把两个三角环误判为一个六边环。</summary>
-    [Fact]
-    public void EqualLocalSignaturesDoNotHideDifferentTopology()
-    {
-        BlockContentSnapshot Cycle(bool split)
+        var previous = CultureInfo.CurrentCulture;
+        try
         {
-            var nodes = new List<BlockContentNode> { Node("r", "块", edges: Enumerable.Range(0, 6).Select(i => new BlockContentEdge("节点", i.ToString())).ToArray()) };
-            for (int i = 0; i < 6; i++)
-                nodes.Add(Node(i.ToString(), "边", edges: [new("下一条", (split ? i / 3 * 3 + (i + 1) % 3 : (i + 1) % 6).ToString())]));
-            return Graph("r", nodes.ToArray());
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
+            var rows = XrefBlockNames.Summarize(Inventory(new XrefBlockNameEntry("z", Source(1), false),
+                new("I", Source(1), false), new("i", Source(2), false), new("A", Source(1), false))).Normal;
+            Assert.Equal(new[] { "A", "I", "z" }, rows.Select(r => r.Name));
+            Assert.Equal("1/2", rows[1].DwgNo);
         }
-        Assert.Equal(XrefBlockComparison.Fingerprint(Cycle(false)), XrefBlockComparison.Fingerprint(Cycle(true)));
-        Assert.False(XrefBlockComparison.Equivalent(Cycle(false), Cycle(true)));
+        finally { CultureInfo.CurrentCulture = previous; }
     }
 
-    /// <summary>显式绘制顺序使用有序边，不能与普通实体集合一起排序抹掉。</summary>
-    [Fact]
-    public void DrawOrderRemainsSignificant()
-    {
-        var a = Graph("r", Node("r", "块", edges: [new("绘制顺序/0", "a"), new("绘制顺序/1", "b")]),
-            Node("a", "实体", [("颜色", "Red")]), Node("b", "实体", [("颜色", "Blue")]));
-        var b = Graph("r", Node("r", "块", edges: [new("绘制顺序/1", "a"), new("绘制顺序/0", "b")]),
-            Node("a", "实体", [("颜色", "Red")]), Node("b", "实体", [("颜色", "Blue")]));
-        Assert.False(XrefBlockComparison.Equivalent(a, b));
-    }
-
-    /// <summary>严格比较保留极小差异、文字大小写和文化无关的数字；零符号不影响数值。</summary>
-    [Fact]
-    public void GeometryIsStrictAndTextIsOrdinal()
-    {
-        Assert.NotEqual(XrefBlockComparison.Number(10), XrefBlockComparison.Number(Math.BitIncrement(10)));
-        Assert.Equal("0", XrefBlockComparison.Number(-0.0));
-        Assert.Throws<InvalidOperationException>(() => XrefBlockComparison.Number(double.NaN));
-        Assert.False(XrefBlockComparison.Equivalent(Definition("a", value: "V").Content, Definition("b", value: "v").Content));
-    }
-
-    /// <summary>直接附着与覆盖均检查，嵌套仅沿附着传播。</summary>
+    /// <summary>没有来源编号的条目不能伪装成有效统计。</summary>
     [Theory]
-    [InlineData(0, true, true)]
-    [InlineData(0, false, true)]
-    [InlineData(1, false, true)]
-    [InlineData(1, true, false)]
-    [InlineData(3, true, false)]
-    public void OverlayBoundaryIsExplicit(int depth, bool overlay, bool expected) =>
-        Assert.Equal(expected, XrefBlockComparison.IncludesReference(depth, overlay));
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void InvalidSourceNumberIsRejected(int number) =>
+        Assert.Throws<InvalidOperationException>(() => XrefBlockNames.Summarize(Inventory(new XrefBlockNameEntry("Valve", Source(number), false))));
 
-    /// <summary>名称分组忽略大小写，文本内容不使用文化忽略规则；同源多条链不增加定义种类。</summary>
+    /// <summary>正常统计定期检查取消，停止后可以无 SDK 地完成部分数据汇总。</summary>
     [Fact]
-    public void NamesGroupByCadRuleAndPreserveAllChains()
+    public void StatisticsCheckpointCanCancelAndMemoryRetryNeedsNoHost()
     {
-        var a = Definition("A.dwg", host: true, name: "Valve");
-        var b = Definition("b.dwg", name: "vALVE", chains: ["A → B", "A → C → B"]);
-        var results = new List<XrefBlockResult>();
-        var batch = CompareDefinitions([a, b], true, () => { }, results.Add, (_, _) => { });
-        Assert.Single(batch.Results); Assert.False(batch.HasIssues);
-        Assert.Equal(2, batch.Results[0].Groups[0].Definitions[1].Source.Chains.Count);
+        var inventory = Inventory(Enumerable.Range(0, 200).Select(i => new XrefBlockNameEntry("B" + i, Source(1), false)).ToArray());
+        int calls = 0;
+        Assert.Throws<OperationCanceledException>(() => XrefBlockNames.Summarize(inventory, () =>
+        { if (++calls == 2) throw new OperationCanceledException(); }));
+        Assert.Equal(200, XrefBlockNames.Summarize(inventory).Normal.Count);
     }
 
-    /// <summary>图中断链必须变为未完整结果，不能利用相同哈希跳过验证。</summary>
-    [Fact]
-    public void DanglingGraphIsIncomplete()
-    {
-        var broken = Definition("a") with { Content = Graph("root", Node("root", "块", edges: [new("实体", "missing")])) };
-        var result = XrefBlockComparison.Compare("Valve", [broken], true);
-        Assert.Equal(XrefBlockStatus.Incomplete, result.Status);
-        Assert.Contains(result.Issues, s => s.Contains("未完整读取"));
-    }
-
-    /// <summary>取消和输出故障立即停止，只有成功落盘项计入已处理结果。</summary>
+    /// <summary>重复名称和匿名名称不构成错误；真实停止、缺失来源及不完整范围默认保留。</summary>
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void CancellationAndWriteFailurePreserveCompletedResults(bool cancel)
+    [InlineData(true, false, false, false)]
+    [InlineData(false, false, false, true)]
+    [InlineData(true, true, false, true)]
+    [InlineData(true, false, true, true)]
+    public void RetentionUsesScanCompletion(bool complete, bool interrupted, bool stopped, bool issues)
     {
-        int writes = 0;
-        var items = new[] { Definition("a", name: "A"), Definition("a2", name: "A"),
-            Definition("b", name: "B"), Definition("b2", name: "B"), Definition("c", name: "C"), Definition("c2", name: "C") };
-        var result = CompareDefinitions(items, true, () => { }, _ =>
+        var inventory = Inventory(new XrefBlockNameEntry("*U1", Source(1), true), new("*U1", Source(2), true)) with { ScopeComplete = complete };
+        var result = new XrefBlockScanResult(inventory, interrupted, stopped ? "原图关闭" : null);
+        Assert.Equal(issues, result.HasIssues);
+    }
+
+    /// <summary>来源自身报错同样不能把保留默认改成 N。</summary>
+    [Fact]
+    public void SourceReadErrorRequiresRetention()
+    {
+        var inventory = new XrefBlockInventory([], [Source(1) with { Error = "SDK ErrorStatus=FileNotFound" }], true);
+        Assert.True(new XrefBlockScanResult(inventory).HasIssues);
+    }
+
+    /// <summary>零名称仍生成两个 BOM 表头，旧冲突 CSV 不再生成。</summary>
+    [Fact]
+    public void EmptyScanProducesOnlyNewReportHeaders()
+    {
+        var files = new RunLogFiles();
+        using (var journal = new XrefBlockJournal(_root, "A.dwg", files))
         {
-            if (++writes == 2) { if (cancel) throw new OperationCanceledException(); throw new IOException("写盘失败"); }
-        }, (_, _) => { });
-        Assert.Single(result.Results); Assert.True(result.HasIssues);
-        Assert.Equal(cancel, result.Interrupted); Assert.NotNull(result.StopReason); Assert.Equal(2, writes);
+            var inventory = new XrefBlockInventory([], [], true);
+            journal.Complete(new(inventory), XrefBlockNames.Summarize(inventory));
+        }
+        foreach (string name in new[] { "AnonymousBlockStatus.csv", "NormalBlockStatus.csv", "XrefBlockSources.csv" })
+        {
+            string path = Path.Combine(_root, name);
+            Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, File.ReadAllBytes(path).Take(3));
+        }
+        Assert.Equal("块名称,dwgNo,dwg计数\r\n", File.ReadAllText(Path.Combine(_root, "NormalBlockStatus.csv")));
+        Assert.False(File.Exists(Path.Combine(_root, "XrefBlockCheck.csv")));
+        files.Seal(); Assert.Equal(5, files.Delete().Deleted);
     }
 
-    /// <summary>比较过程内部也响应取消，不等待整个大图完成。</summary>
+    /// <summary>统计输出遵守固定表头、RFC 4180 和 CRLF；只读查看器能立即观察完成记录。</summary>
     [Fact]
-    public void GraphSearchPropagatesCancellation()
+    public void StatisticsCsvUsesExactSchemaAndEscaping()
     {
-        Assert.Throws<OperationCanceledException>(() => XrefBlockComparison.Equivalent(Definition("a").Content, Definition("b").Content,
-            () => throw new OperationCanceledException()));
+        using var journal = new XrefBlockJournal(_root, "A.dwg", new RunLogFiles());
+        var inventory = Inventory(new XrefBlockNameEntry("中文,\"Valve\"\r\n下一行", Source(1), false),
+            new("xxx", Source(5), true), new("xxx", Source(2), true), new("xxx", Source(1), true));
+        journal.Complete(new(inventory), XrefBlockNames.Summarize(inventory));
+        Assert.Equal("块名称,dwgNo,dwg计数\r\nxxx,1/2/5,3\r\n", XrefNameCsvTests.ReadLive(journal.AnonymousPath));
+        Assert.Contains("\"中文,\"\"Valve\"\"\r\n下一行\",1,1\r\n", XrefNameCsvTests.ReadLive(journal.NormalPath));
     }
 
-    /// <summary>目录取消前建议路径不创建目录，重名自动递增。</summary>
+    /// <summary>源读取失败和覆盖边界保留真实日志，不虚构来源编号或名称。</summary>
     [Fact]
-    public void PathsUseUnifiedDocumentsRootAndCollisionSuffix()
+    public void ReadErrorsAndPartialResultsAreExplicit()
     {
-        var now = new DateTime(2026, 10, 26, 12, 0, 0);
-        string suggested = RunPaths.Suggest(_root, RunLogKind.XrefBlockCheck, now);
-        Assert.Equal(Path.Combine(_root, "Pn3DKit", "XrefBlockCheck", "261026120000"), suggested);
-        Assert.False(Directory.Exists(suggested));
-        Directory.CreateDirectory(suggested);
-        Assert.Equal(suggested + "_01", RunPaths.Suggest(_root, RunLogKind.XrefBlockCheck, now));
+        using var journal = new XrefBlockJournal(_root, "A.dwg", new RunLogFiles());
+        journal.Relation(new("A", "B", "b.dwg", "A → B", true, false, "嵌套覆盖"));
+        journal.Source(new("失败0", "lost.dwg", "未读取", false, ["A → lost"], "SDK ErrorStatus=FileNotFound"));
+        var inventory = Inventory(new XrefBlockNameEntry("Valve", Source(1), false)) with { ScopeComplete = false };
+        journal.Complete(new(inventory, true, "用户取消"), XrefBlockNames.Summarize(inventory));
+        string log = XrefNameCsvTests.ReadLive(journal.LogPath);
+        Assert.Contains("已中断", log); Assert.Contains("扫描不完整", log);
+        Assert.Contains("嵌套覆盖", log); Assert.Contains("SDK ErrorStatus=FileNotFound", log);
+        Assert.Contains("Valve,1,1", XrefNameCsvTests.ReadLive(journal.NormalPath));
     }
 
-    /// <summary>CreateNew 冲突不得覆盖原文件，也不创建另一件日志。</summary>
+    /// <summary>五件固定文件冲突不覆盖原文件，也不会创建其他输出。</summary>
     [Theory]
     [InlineData("XrefBlockCheck.log")]
-    [InlineData("XrefBlockCheck.csv")]
+    [InlineData("XrefBlockSources.csv")]
+    [InlineData("AnonymousBlockStatus.csv")]
+    [InlineData("NormalBlockStatus.csv")]
+    [InlineData("Result.csv")]
     public void ExistingReportsAreNeverOverwritten(string name)
     {
         Directory.CreateDirectory(_root);
@@ -289,91 +169,80 @@ public sealed class XrefBlockTests : IDisposable
         Assert.Single(Directory.GetFiles(_root));
     }
 
-    /// <summary>CSV 带 BOM，来源多链逐行、中文／引号／逗号／换行按 RFC 4180 转义，完成前即可读取。</summary>
+    /// <summary>历史详细报告不再创建或登记，选择清理本批输出时也不能删除历史文件。</summary>
     [Fact]
-    public void JournalFlushesGroupsAndErrorsWithUtf8Bom()
+    public void LegacyComparisonReportIsPreservedAndNotOwned()
     {
+        Directory.CreateDirectory(_root);
+        string legacy = Path.Combine(_root, "NormalBlockComparison.csv");
+        File.WriteAllText(legacy, "历史报告");
         var files = new RunLogFiles();
         using (var journal = new XrefBlockJournal(_root, "A.dwg", files))
-        {
-            var definition = Definition("中文,\"a\".dwg", host: true, chains: ["A → B", "A\n→ C"]);
-            journal.Relation(new("A", "B", "b.dwg", "A → B", true, false, "嵌套覆盖"));
-            journal.Source(new("missing", "lost.dwg", "未读取", false, ["A → lost"], "SDK ErrorStatus=FileNotFound"));
-            journal.Append(XrefBlockComparison.Compare("Valve", [definition], true));
-            using var reader = new StreamReader(new FileStream(journal.CsvPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
-            string csv = reader.ReadToEnd();
-            Assert.Contains("\"中文,\"\"a\"\".dwg\"", csv);
-            Assert.Contains("\"A\n→ C\"", csv);
-            Assert.Contains("SDK ErrorStatus=FileNotFound", csv);
-            using var logReader = new StreamReader(new FileStream(journal.LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
-            Assert.Contains("嵌套覆盖", logReader.ReadToEnd());
-            journal.Complete(new([], false, true, "已中断"));
-        }
-        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, File.ReadAllBytes(Path.Combine(_root, "XrefBlockCheck.csv")).Take(3));
-        Assert.Contains("已中断", File.ReadAllText(Path.Combine(_root, "XrefBlockCheck.log")));
-        files.Seal();
-        Assert.Equal(2, files.Delete().Deleted);
+            Assert.Equal(Path.Combine(_root, "Result.csv"), journal.ComparisonPath);
+        files.Seal(); Assert.Equal(5, files.Delete().Deleted);
+        Assert.Equal("历史报告", File.ReadAllText(legacy));
+        Assert.Single(Directory.GetFiles(_root));
     }
 
-    /// <summary>大型定义使用显式回溯栈，不按实体数静默截断或消耗同等深度的调用栈。</summary>
-    [Fact]
-    public void LargeDefinitionKeepsAllEntities()
-    {
-        const int count = 1800;
-        BlockContentSnapshot Many(string prefix, bool reverse)
-        {
-            var ids = Enumerable.Range(0, count).Select(i => prefix + i).ToArray();
-            var nodes = new List<BlockContentNode>
-            {
-                Node(prefix, "块", edges: (reverse ? ids.Reverse() : ids).Select(id => new BlockContentEdge("实体", id)).ToArray())
-            };
-            nodes.AddRange(Enumerable.Range(0, count).Select(i => Node(prefix + i, "圆", [("半径", i.ToString())])));
-            return Graph(prefix, nodes.ToArray());
-        }
-        Assert.True(XrefBlockComparison.Equivalent(Many("a", false), Many("b", true)));
-    }
-
-    /// <summary>外部资源保留完整内容，不能仅凭文件名或摘要决定相等。</summary>
-    [Fact]
-    public void ResourcePayloadUsesExactBytes()
-    {
-        var a = Graph("r", Node("r", "字体") with { Payloads = new Dictionary<string, byte[]> { ["内容"] = [1, 2, 3] } });
-        var b = Graph("x", Node("x", "字体") with { Payloads = new Dictionary<string, byte[]> { ["内容"] = [1, 2, 4] } });
-        Assert.False(XrefBlockComparison.Equivalent(a, b));
-        Assert.Contains(XrefBlockComparison.Differences(a, b), s => s.Contains("资源文件内容不同"));
-    }
-
-    /// <summary>只按已确认的命名空间恢复原名，未知前缀及嵌套关系不会被截成最后一段。</summary>
+    /// <summary>统计或主报告写入失败停止后续文件，故障后不能再次宣称输出完成。</summary>
     [Theory]
-    [InlineData("Valve", "X", "Valve")]
-    [InlineData("X|Valve", "X", "Valve")]
-    [InlineData("X|Child|Valve", "X", "Child|Valve")]
-    [InlineData("Unknown|Valve", "X", null)]
-    public void OriginalNameRequiresConfirmedNamespace(string stored, string source, string? expected) =>
-        Assert.Equal(expected, XrefBlockComparison.RemoveSourceNamespace(stored, [source]));
+    [InlineData("AnonymousBlockStatus.csv")]
+    [InlineData("XrefBlockCheck.log")]
+    public void ReportFailureIsFatalAndPreventsLaterStatistics(string failedFile)
+    {
+        var streams = new Dictionary<string, XrefFaultStream>();
+        var files = new RunLogFiles();
+        var journal = new XrefBlockJournal(_root, "A.dwg", files, new XrefTestTimeProvider(),
+            createReportFile: path => streams[Path.GetFileName(path)] = new(files.CreateNew(path)));
+        streams[failedFile].FailWrites = true;
+        try
+        {
+            var inventory = Inventory(new XrefBlockNameEntry("*U1", Source(1), true), new("Valve", Source(1), false));
+            Assert.Throws<XrefBlockLogException>(() => journal.Complete(new(inventory), XrefBlockNames.Summarize(inventory)));
+            Assert.True(journal.HasWriteFailure);
+            Assert.Equal("块名称,dwgNo,dwg计数\r\n", XrefNameCsvTests.ReadLive(journal.NormalPath));
+            Assert.Throws<XrefBlockLogException>(() => journal.Complete(new(inventory), XrefBlockNames.Summarize(inventory)));
+        }
+        finally { streams[failedFile].FailWrites = false; journal.Dispose(); }
+    }
 
-    /// <summary>FILEDIA 两种流程都只在确认后使用目录，取消不创建任何文件。</summary>
+    /// <summary>固定报告关闭失败仍关闭其余输出，并明确标记故障。</summary>
+    [Fact]
+    public void ReportCloseFailureClosesAllOtherFiles()
+    {
+        var files = new RunLogFiles(); var streams = new Dictionary<string, XrefFaultStream>();
+        var journal = new XrefBlockJournal(_root, "A.dwg", files, new XrefTestTimeProvider(),
+            createReportFile: path => streams[Path.GetFileName(path)] = new(files.CreateNew(path)));
+        streams["NormalBlockStatus.csv"].FailClose = true;
+        Assert.Throws<XrefBlockLogException>(journal.Dispose);
+        Assert.True(journal.HasWriteFailure); Assert.All(streams.Values, stream => Assert.True(stream.Closed));
+        files.Seal(); Assert.Null(files.ProtectionReason);
+    }
+
+    /// <summary>目录取消不创建目录，建议路径仍按统一文档根和序号生成。</summary>
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
     public void DirectoryConfirmationAndCancelCreateNothing(int fileDia)
     {
-        string suggested = Path.Combine(_root, "suggested");
+        string suggested = RunPaths.Suggest(_root, RunLogKind.XrefBlockCheck, new DateTime(2026, 10, 26, 12, 0, 0));
+        Assert.Equal(Path.Combine(_root, "Pn3DKit", "XrefBlockCheck", "261026120000"), suggested);
         int dialogs = 0;
-        string? result = OutputDirectorySelection.Select(fileDia, suggested,
-            _ => { dialogs++; return suggested; }, _ => "", _ => { }, XrefBlockJournal.Validate);
-        Assert.Equal(suggested, result); Assert.Equal(0, dialogs); Assert.False(Directory.Exists(_root));
-        Assert.Null(OutputDirectorySelection.Select(fileDia, suggested, _ => throw new InvalidOperationException(),
-            _ => null, _ => { }, XrefBlockJournal.Validate));
-        Assert.False(Directory.Exists(_root));
+        Assert.Equal(suggested, OutputDirectorySelection.Select(fileDia, suggested, _ => { dialogs++; return suggested; },
+            _ => "", _ => { }, XrefBlockJournal.Validate));
+        Assert.Equal(0, dialogs); Assert.False(Directory.Exists(_root));
+        Assert.Null(OutputDirectorySelection.Select(fileDia, suggested, _ => null, _ => null, _ => { }, XrefBlockJournal.Validate));
         if (fileDia == 1)
         {
             Assert.Equal(suggested, OutputDirectorySelection.Select(fileDia, suggested,
                 _ => { dialogs++; return suggested; }, _ => "C", _ => { }, XrefBlockJournal.Validate));
             Assert.Equal(1, dialogs);
         }
+        Assert.False(Directory.Exists(_root));
+        Directory.CreateDirectory(suggested);
+        Assert.Equal(suggested + "_01", RunPaths.Suggest(_root, RunLogKind.XrefBlockCheck, new DateTime(2026, 10, 26, 12, 0, 0)));
     }
 
-    /// <summary>临时目录仅属于本测试实例。</summary>
+    /// <summary>只删除本测试建立的临时目录。</summary>
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }

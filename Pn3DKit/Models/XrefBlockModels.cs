@@ -1,102 +1,39 @@
 namespace Pn3DKit.Models;
 
-/// <summary>内容比较状态与匿名未比较提示；完整性独立于已确认冲突。</summary>
-public enum XrefBlockStatus { Consistent, Conflict, Unique, Incomplete, ReadError, AnonymousSkipped }
-
-/// <summary>来源数据库及其全部引用链；Key 仅标识本批来源，不参与内容比较。</summary>
+/// <summary>本批来源及全部引用链；dwgNo 按首次名称扫描顺序分配，0 表示尚未进入扫描。</summary>
 public sealed record XrefBlockSource(string Key, string Drawing, string DataSource, bool IsHost,
-    IReadOnlyList<string> Chains, string? Error = null);
+    IReadOnlyList<string> Chains, string? Error = null, int DwgNo = 0);
 
+/// <summary>已确认的原始块名及 SDK 匿名标志，不包含实体内容或引用数量。</summary>
+public sealed record XrefBlockNameEntry(string Name, XrefBlockSource Source, bool IsAnonymous);
 
-/// <summary>只含名称及来源的轻量条目；Key 仅在本批定位真实定义，不代表内容或句柄。</summary>
-public sealed record XrefBlockNameEntry(string Key, string Name, XrefBlockSource Source, bool IsAnonymous);
-
-/// <summary>名称扫描结果与全部来源；尚未读取实体、资源或使用状态。</summary>
+/// <summary>内存名称清单；取消后仍可捕获已确认条目，范围完整性单独标明。</summary>
 public sealed record XrefBlockInventory(IReadOnlyList<XrefBlockNameEntry> Entries,
     IReadOnlyList<XrefBlockSource> Sources, bool ScopeComplete);
 
-/// <summary>不同来源中的同名候选；匿名根只报告名称重复，不做内容归组。</summary>
-public sealed record XrefBlockCandidate(string Name, IReadOnlyList<XrefBlockNameEntry> Entries)
-{
-    /// <summary>保守处理任何包含匿名项的候选，不把名称编号冒充定义身份。</summary>
-    public bool IsAnonymous => Entries.Any(x => x.IsAnonymous);
-}
-
-/// <summary>按来源汇总唯一名称及候选数量；不为唯一名称创建逐块报告或假快照。</summary>
-public sealed record XrefBlockSourceSummary(XrefBlockSource Source, int Names, int UniqueNames,
-    int NamedCandidates, int AnonymousCandidates);
-
-/// <summary>已完成名称预筛选；进度以候选名称组计，唯一名称单独汇总。</summary>
-public sealed record XrefBlockSelection(IReadOnlyList<XrefBlockCandidate> Candidates,
-    IReadOnlyList<XrefBlockSourceSummary> Sources, bool ScopeComplete)
-{
-    /// <summary>无需独立读取内容的唯一名称条目数，不包含其作为父块依赖时的读取。</summary>
-    public int UniqueNames => Sources.Sum(x => x.UniqueNames);
-}
-
-/// <summary>本批定义请求和阶段计时；不把宿主替身的耗时作为真实 CAD 性能。</summary>
-public sealed record XrefBlockBatchMetrics(int DefinitionRequests, TimeSpan Reading, TimeSpan Comparing);
-
-/// <summary>外参关系，覆盖边界不属于读取失败；循环及错误须说明原因。</summary>
+/// <summary>外参关系及附着／覆盖边界，保留完整到达链和读取问题。</summary>
 public sealed record XrefBlockRelation(string Parent, string Alias, string Drawing, string Chain,
     bool Overlay, bool Included, string Detail);
 
-/// <summary>内容图中的有向关联；相同 Label 的边构成多重集，有序关系由适配层编码序号。</summary>
-public sealed record BlockContentEdge(string Label, string Target);
-
-/// <summary>忽略数据库身份后的类型、精确字段及关联；Id 只用于图内连接。</summary>
-public sealed record BlockContentNode(string Id, string Kind, IReadOnlyDictionary<string, string> Fields,
-    IReadOnlyList<BlockContentEdge> Edges, IReadOnlyDictionary<string, byte[]>? Payloads = null);
-
-/// <summary>根定义及可达依赖图；不完整原因和读取错误不能被哈希相同掩盖。</summary>
-public sealed record BlockContentSnapshot(string Root, IReadOnlyDictionary<string, BlockContentNode> Nodes,
-    IReadOnlyList<string> Issues, string? ReadError = null)
+/// <summary>一种块名涉及的去重来源编号，不表示插入数或内容是否相同。</summary>
+public sealed record XrefBlockNameStatus(string Name, IReadOnlyList<int> DwgNumbers)
 {
-    /// <summary>只有完整成功读取的快照才可以归入相同内容组。</summary>
-    public bool Complete => ReadError == null && Issues.Count == 0;
+    /// <summary>来源编号以数值升序用斜线连接。</summary>
+    public string DwgNo => string.Join("/", DwgNumbers);
+    /// <summary>包含该名称的不同来源数据库数量。</summary>
+    public int DwgCount => DwgNumbers.Count;
 }
 
-/// <summary>来源中的一个原始命名块；直接引用数与模型／布局可达使用状态分别记录。</summary>
-public sealed record XrefBlockDefinition(string Name, XrefBlockSource Source, BlockContentSnapshot Content,
-    int DirectReferences, bool Used)
+/// <summary>匿名和普通块名分别汇总，单来源名称也保留。</summary>
+public sealed record XrefBlockStatistics(IReadOnlyList<XrefBlockNameStatus> Anonymous,
+    IReadOnlyList<XrefBlockNameStatus> Normal);
+
+/// <summary>本次扫描的结束状态；名称重复不构成错误或内容冲突。</summary>
+public sealed record XrefBlockScanResult(XrefBlockInventory Inventory, bool Interrupted = false, string? StopReason = null)
 {
-    /// <summary>不把未使用父块中的引用冒充实际使用。</summary>
-    public string Usage => (Used ? "已使用" : "未使用定义") + "；直接引用数 " + DirectReferences;
-}
-
-/// <summary>完整等价定义组成一组；不完整定义不与其他来源合并。</summary>
-public sealed record XrefBlockGroup(string Number, IReadOnlyList<XrefBlockDefinition> Definitions);
-
-/// <summary>同名定义的内容分组、差异和合并风险；已知冲突与未完整比较可以同时存在。</summary>
-public sealed record XrefBlockResult(string Name, XrefBlockStatus Status, bool Complete,
-    IReadOnlyList<XrefBlockGroup> Groups, IReadOnlyList<string> Differences,
-    IReadOnlyList<string> Issues, string Risk, IReadOnlyList<XrefBlockNameEntry>? Uncompared = null)
-{
-    /// <summary>报告使用的明确中文状态。</summary>
-    public string StatusText => Status switch
-    {
-        XrefBlockStatus.Consistent => "一致",
-        XrefBlockStatus.Conflict => "冲突",
-        XrefBlockStatus.Unique => "无同名定义，无需比较",
-        XrefBlockStatus.ReadError => "读取错误",
-        XrefBlockStatus.AnonymousSkipped => "匿名块同名，未比较",
-        _ => "无法完整比较"
-    };
-}
-
-/// <summary>记录本批结束状态，避免把取消或未知来源当作检查正常。</summary>
-public sealed record XrefBlockBatchResult(IReadOnlyList<XrefBlockResult> Results, bool ScopeComplete,
-    bool Interrupted, string? StopReason, int? Total = null, XrefBlockSelection? Selection = null,
-    XrefBlockBatchMetrics? Metrics = null)
-{
-    /// <summary>冲突、不完整、错误或中断时默认保留报告。</summary>
-    public bool HasIssues => !ScopeComplete || Interrupted || StopReason != null || Total.HasValue && Results.Count != Total.Value
-        || Results.Any(x => !x.Complete || x.Status is XrefBlockStatus.Conflict or XrefBlockStatus.Incomplete
-            or XrefBlockStatus.ReadError or XrefBlockStatus.AnonymousSkipped);
-
-    /// <summary>所有候选已处理，仅匿名项按规则未比较；不与读取失败或中断混同。</summary>
-    public bool CompletedWithAnonymousHints => ScopeComplete && !Interrupted && StopReason == null
-        && Total.HasValue && Results.Count == Total.Value
-        && Results.Any(x => x.Status == XrefBlockStatus.AnonymousSkipped)
-        && Results.All(x => x.Complete || x.Status == XrefBlockStatus.AnonymousSkipped);
+    /// <summary>只有全范围完成且没有停止／读取错误时，日志保留才默认 N。</summary>
+    public bool HasIssues => !Inventory.ScopeComplete || Interrupted || StopReason != null
+        || Inventory.Sources.Any(s => s.Error != null);
+    /// <summary>供命令行和日志使用的真实扫描状态。</summary>
+    public string State => Interrupted ? "已中断" : StopReason != null ? "已停止" : HasIssues ? "扫描不完整" : "已完成";
 }

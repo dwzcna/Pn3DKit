@@ -33,13 +33,13 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.31 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.31
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.32 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.32
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.31 -OutputDirectory artifacts/release/0.1.31
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.32 -OutputDirectory artifacts/release/0.1.32
 ```
 
-Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源检索代码，不引用或加载 Autodesk。来源检索通过最小 SDK 替身验证生命周期；实体及 BRep 适配仍需插件编译和授权后的真实 CAD 验收，不能用替身结果替代。
+Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源检索代码，不引用或加载 Autodesk。来源检索通过最小只读 SDK 替身验证生命周期和调用范围；名称阶段只读取块表元数据，候选二维内容使用类型化快照和内容读取替身，真实 CAD 的扫描、比较及性能仍待授权复测。
 
 离线验证覆盖导出策略、位号检查策略、目录和 CSV、取消及日志保留，不代表 SDK 在真实项目中的运行效果。实际 CAD 验收应使用明确授权的项目副本；本次不自动连接 CAD 或操作用户图纸。
 
@@ -61,17 +61,19 @@ $sdk = ./build/Get-PlantSdk.ps1
 
 PlantTagCheckAccess.ReadFields 对非自动编号的 N／NN／NNN 字段，将 RetrieveProperty 已读原值传给 FormatToolsUtil.FormatNumerals(formatCharacters, raw)，不再通过片段 Evaluate 获取数字段。TagCheckPolicy.FormatProperty 统一路由并验证结果；非空数字返回空值或格式化抛错时返回字段格式化失败，保留路径、原值、格式和可获得的 SDK 状态。该错误不由可选字段的 KeyNotFound 规则吞掉，不生成缺号期望值；共享检查与两个重建预检入口均沿用此结果。其他格式、配对字段与自动编号原有处理保持；不以本修复重新承诺所有 SDK 求值无副作用。
 
-## 外参块检查实现
+## 外参块名称统计与候选比较实现
 
-XREFBLOCKCHECK 共用 BatchRunGate、完整 BlockTableId 身份检查、目录选择及 RunLogFiles／日志保留。XrefBlockCadCatalog 使用宿主外参图、只读事务及受控旁路数据库；成功／失败读取均缓存，保留多链和同路径不同内存状态，工具不释放宿主数据库。已确认的源命名空间映射用于原名恢复，禁止截取最后一个竖线后内容。
+XrefBlockCadCatalog 保留外参图、旁路只读数据库、完整 BlockTableId、命名空间还原、同源多链和同路径不同状态缓存。名称阶段仅读块表元数据，记录内部原名到 ObjectId 的定位索引；GUID 流式清单、dwgNo 和两份三列统计不变。统计先刷新，再按内存中的 Normal.DwgCount > 1 建立候选。
 
-0.1.31 将清单与内容分开：Discover／ReadNames 仅读块表，XrefBlockNameEntry 不含内容；XrefBlockBatch.Select 按不同来源 Key 及 OrdinalIgnoreCase 名称构造 XrefBlockSelection，唯一名称按来源汇总，匿名候选以 AnonymousSkipped 和 Uncompared 条目落报告。Compare 仅为命名候选调用 ReadDefinition，来源读取器、根快照及可达使用索引惰性缓存。命名父块的匿名和唯一名依赖沿用原快照算法；不伪造完整空快照。VerifySources 在名称读取及结束时核对所有有效来源，逐根读取也检查身份与磁盘状态；文件变化停止并标记先前记录的时间范围。读取器先于旁路数据库释放。LOG 记录名称扫描、筛选、内容读取及比较耗时和实际根读取数；CSV 不逐块输出唯一名，无候选时只有表头。
+候选通过 ReadDefinition 重新核对来源、文件状态及目标名称／匿名标志，按来源／定义缓存快照；每个实际需要的来源只创建一个 XrefBlockSnapshotReader。无候选时根读取和内容读取器均为零。不恢复使用索引或插入数量查询。比较结束先释放读取器只读事务，再释放本工具数据库；宿主数据库不释放。
 
-SDK 的托管 DxfFiler 没有直接可用的托管写出器构造；实现改用官方 samples/dotNet/FilerSample 所示 DwgFiler.CopyFiler 和 DBObject.DwgOut，在内存捕获类型化数据，不导出临时图纸或引入原生桥接 DLL。图层、线型、字体和标注样式读取公开语义属性，排除外参依赖／使用缓存标志。未知二进制和未解释类型均标记不完整。
+读取器复用 CopyFiler 类型化内存捕获，仅支持 XrefBlockContentScope 明确列出的二维类型及普通嵌套。常用文字、属性定义、填充、标注和显示资源保留；未知数据不静默忽略。动态块先行拒绝，不读取动作／可见性或触发求值；三维、代理和循环等具体原因传播到根。AcDbMgdBrep 不恢复，仍为九个不复制 SDK 参考。
 
-新增宿主参考 AcDbMgdBrep.dll，Private=false，并进入 SDK 来源／.NET 8 校验；共十个 SDK 参考，Actions 原包已有该文件。BRep 读取精确拓扑及解析／NURBS 参数；SubDMesh 顶点索引转为图连接。动态原定义与可读参数、约束关联均纳入读取，原生 EvalGraph、约束子实体／专有参数、部分曲面与网格语义仍明确不完整，详见 XrefBlockCheck.md。
+BlockContentSnapshot 与比较模型不依赖 Autodesk。XrefBlockComparison 按无环依赖自底向上建立规范化内容身份，以字段、边多重集和完整资源字节核对，摘要不能代替等价性。创建顺序和本地节点编号忽略，重复实体与显式绘制关系保留；共享的相同依赖不因存储别名不同误报。不执行原有图同构回溯。Differences 先按字段签名去除相同节点，输出具体值和数量差异。
 
-XrefBlockComparison 按类型、精确字段、重复边、资源完整字节及带标签图双射比较，哈希仅加速，显式栈回溯可取消；XrefBlockJournal 独占创建两件报告并逐条刷新。读取缺失、上下文变化或写盘失败不会被正常结束覆盖。十条命令、单 DLL；不得自动连接 CAD 验收。
+XrefBlockComparisonBatch 串行读取候选，归组且报告刷新成功后才登记完成；检查点、文档和日志异常直接传播。停止后的 Remaining、CaptureNames 和结束报告只操作内存。Result.csv 独立于名称统计，固定“块名称,dwgNo,结果”，每候选一行，来源编号去重后数字排序。XrefBlockComparisonResult.ResultText 将内部五态映射为匹配／不匹配／未验证：已确认不同优先，完整一致才匹配，其余未验证；原状态和完整性继续供 LOG 和保留策略使用。来源、组号、差异及错误完整写 LOG，不再生成 NormalBlockComparison.csv。
+
+五件固定输出和名称清单均由 RunLogFiles.CreateNew 登记，UTF-8 BOM／RFC 4180／CRLF；逐名称 50 行／1 秒、逐候选完成刷新。写入故障停止，不当作普通对象读取错误继续；不删除用户文件。真实 CAD SDK 覆盖边界见 XrefBlockCheck.md。
 
 ## 自动发布
 
@@ -82,7 +84,7 @@ XrefBlockComparison 按类型、精确字段、重复边、资源完整字节及
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.31/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.32/。
 
 ## 当前实现与验收
 
@@ -90,11 +92,11 @@ XrefBlockComparison 按类型、精确字段、重复边、资源完整字节及
 
 已测试：离线策略、Fake Host 生命周期、默认否、冲突、数据行别名、日志、保存等待及异常收尾；插件通过双配置构建和十条命令元数据校验，实际结果见 Changlog.md 和 validation 日志。
 
-0.1.31 本轮 x64 Debug／Release 构建零警告、零错误，各 593 项离线回归全部通过，其中外参定向 85 项。真实目录源码的 SDK 替身在 1,500 个唯一名、仅匿名同名时根快照／读取器／使用索引均为 0；加入两组跨三来源命名候选后根读取为 6。纯策略 20 来源的 5,000 个唯一名不触发读取，三组命名候选只请求 60 个定义。阶段耗时与计数保存在 artifacts/validation/0.1.31/performance-evidence.json；版本、十命令、SDK 来源、单 DLL、ZIP 和 SHA-256 校验见 summary.json。真实 CAD 多外参提速及 Bind → Insert 对照待授权测试图纸复测，不以替身耗时替代。
+0.1.32 本轮双配置构建零警告、零错误，两配置各 660 项回归通过，其中外参 152 项，较 0.1.31.3 增加 12 项。验证三种结果映射、每块单行、编号去重及数字排序、详细 LOG、取消及未验证、历史文件保全，同时保留名称预筛选、按需内容读取、严格快照和输出故障停止回归。两配置 0.1.32.0／产品 0.1.32／十命令／.NET 8／AMD64／单 DLL、九个 SDK 来源及 Private=false，以及 ZIP 三件载荷和内外 SHA-256 均通过，证据保存到 artifacts/validation/0.1.32/；未加载 Autodesk 运行 CAD，离线通过不替代实际图纸验收。
 
 0.1.29 已完成的 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
 
-未完成：CAD 实机验收仍待执行；本轮 0.1.31 完成本机验证与候选交付后本地提交，不推送、不创建 Release。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
+未完成：CAD 实机验收仍待执行。0.1.32 本轮已获提交、普通推送 main／v0.1.32 及正式 Release 授权；完成本机验证后发布并回下载核验资产。实机需确认同图身份、自动编号、DataLinks 写入和重复错误、注释刷新、Esc、QSAVE、外参二维读取与比较，以及一次 UNDO 对图形及 Plant 缓存的完整回退。不得自动连接 CAD 验收用户图纸。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 

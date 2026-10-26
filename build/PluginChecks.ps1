@@ -66,7 +66,7 @@ function Get-PluginMetadata([string]$Path, [switch]$IncludeCommands) {
 # 核对原版 .NET 8 参考，明确拒绝误用面向更高运行时的 SDK。
 function Assert-PluginReferences([string]$AutoCadManagedRoot, [string]$PlantManagedRoot, [string]$PlantCommonManagedRoot) {
     if (!$PlantCommonManagedRoot) { $PlantCommonManagedRoot = $PlantManagedRoot }
-    $referencePaths = @('AcCoreMgd.dll','AcDbMgd.dll','AcDbMgdBrep.dll','AcMgd.dll','AdWindows.dll','AcWindows.dll') |
+    $referencePaths = @('AcCoreMgd.dll','AcDbMgd.dll','AcMgd.dll','AdWindows.dll','AcWindows.dll') |
         ForEach-Object { Join-Path $AutoCadManagedRoot $_ }
     $referencePaths += Join-Path $PlantManagedRoot 'PnPProjectManagerMgd.dll'
     $referencePaths += @('PnPDataLinks.dll','PnPDataObjects.dll','PnPCommonDbxMgd.dll') |

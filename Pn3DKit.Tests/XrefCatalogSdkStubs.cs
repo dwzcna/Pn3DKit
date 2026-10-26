@@ -1,6 +1,5 @@
 // 本文件仅属于离线测试程序集：模拟 SDK 读取接口，不引用、不加载 Autodesk，也不解释真实 DWG。
 using System.Collections;
-using Pn3DKit.Models;
 
 namespace Autodesk.AutoCAD.Runtime
 {
@@ -42,33 +41,20 @@ namespace Autodesk.AutoCAD.DatabaseServices
     internal sealed class BlockTableRecord(string name) : DBObject, IEnumerable<ObjectId>
     {
         internal readonly List<ObjectId> Items = [];
-        internal readonly List<ObjectId> Anonymous = [];
         internal Database? Loaded;
-        internal int ReferenceReads;
         internal int EntityEnumerations;
         public string Name { get; } = name;
         public bool IsLayout { get; set; }
         public bool IsFromExternalReference { get; set; }
         public bool IsDependent { get; set; }
         public bool IsAnonymous { get; set; }
-        public bool IsDynamicBlock { get; set; }
         public bool IsUnloaded { get; set; }
         public bool IsFromOverlayReference { get; set; }
         public XrefStatus XrefStatus { get; set; } = XrefStatus.Resolved;
         public string PathName { get; set; } = "";
         public Database? GetXrefDatabase(bool incrementUnresolved) => Loaded;
-        public List<ObjectId> GetBlockReferenceIds(bool directOnly, bool forceValidity)
-        { ReferenceReads++; return []; }
-        public List<ObjectId> GetAnonymousBlockIds() => Anonymous;
         public IEnumerator<ObjectId> GetEnumerator() { EntityEnumerations++; return Items.GetEnumerator(); }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-    /// <summary>模拟用于可达使用判断的插入引用。</summary>
-    internal sealed class BlockReference : DBObject
-    {
-        public ObjectId BlockTableRecord { get; set; }
-        public bool IsDynamicBlock { get; set; }
-        public ObjectId DynamicBlockTableRecord { get; set; }
     }
     /// <summary>模拟数据库，只读文件装载由测试预登记数据提供。</summary>
     internal sealed class Database : IDisposable
@@ -78,6 +64,7 @@ namespace Autodesk.AutoCAD.DatabaseServices
         internal static readonly Dictionary<string, Runtime.ErrorStatus> Failures = new(StringComparer.OrdinalIgnoreCase);
         internal static readonly List<Database> Created = [];
         internal static readonly List<(FileOpenMode Mode, string Password)> ReadModes = [];
+        internal static Action<Database, ObjectId>? OnGetObject;
         internal Dictionary<ObjectId, DBObject> Objects = [];
         internal readonly List<Database> GraphDatabases = [];
         internal bool Fixture;
@@ -126,8 +113,11 @@ namespace Autodesk.AutoCAD.DatabaseServices
     /// <summary>读取预登记对象，不支持写入和提交。</summary>
     internal sealed class Transaction(Database database) : IDisposable
     {
-        public DBObject GetObject(ObjectId id, OpenMode mode) => database.Objects.TryGetValue(id, out var obj) ? obj
-            : id.Database!.Objects[id];
+        public DBObject GetObject(ObjectId id, OpenMode mode)
+        {
+            Database.OnGetObject?.Invoke(database, id);
+            return database.Objects.TryGetValue(id, out var obj) ? obj : id.Database!.Objects[id];
+        }
         public void Dispose() { }
     }
     /// <summary>独立关系图快照，不拥有数据库。</summary>
@@ -154,36 +144,6 @@ namespace Autodesk.AutoCAD.DatabaseServices
             if (!File.Exists(result)) throw new Runtime.Exception(Runtime.ErrorStatus.FileNotFound);
             return result;
         }
-    }
-}
-namespace Pn3DKit.Interop
-{
-    /// <summary>来源测试的快照替身，真实快照读取仍由插件 SDK 构建和 CAD 复测验证。</summary>
-    internal sealed class XrefBlockSnapshotReader : IDisposable
-    {
-        private readonly Autodesk.AutoCAD.DatabaseServices.Database _database;
-        private readonly Action _ensure;
-        private readonly IReadOnlyList<string>? _namespaces;
-        internal static Action<Autodesk.AutoCAD.DatabaseServices.Database>? OnRead;
-        internal static Func<Autodesk.AutoCAD.DatabaseServices.Database, Autodesk.AutoCAD.DatabaseServices.ObjectId, BlockContentSnapshot>? CreateSnapshot;
-        internal static readonly List<string[]> NamespaceReads = [];
-        internal static readonly List<Autodesk.AutoCAD.DatabaseServices.ObjectId> RootsRead = [];
-        internal static int CreatedCount, DisposedCount;
-        /// <summary>记录真实目录何时创建读取器；名称预筛选不应触达这里。</summary>
-        internal XrefBlockSnapshotReader(Autodesk.AutoCAD.DatabaseServices.Database database, Action ensure,
-            IReadOnlyList<string>? namespaces = null)
-        {
-            _database = database; _ensure = ensure; _namespaces = namespaces;
-            CreatedCount++;
-        }
-        internal BlockContentSnapshot Read(Autodesk.AutoCAD.DatabaseServices.ObjectId id)
-        {
-            _ensure(); NamespaceReads.Add(_namespaces?.ToArray() ?? []);
-            RootsRead.Add(id); OnRead?.Invoke(_database);
-            return CreateSnapshot?.Invoke(_database, id) ?? new("root", new Dictionary<string, BlockContentNode>
-            { ["root"] = new("root", "快照替身", new Dictionary<string, string>(), []) }, []);
-        }
-        public void Dispose() { DisposedCount++; }
     }
 }
 namespace Pn3DKit.Commands
