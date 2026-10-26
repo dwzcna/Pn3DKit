@@ -35,6 +35,20 @@ public sealed class RunLogFiles
         _files.Add(path); _streams.Add(stream);
         return stream;
     }
+    /// <summary>只允许本工具命名的差异 PNG，CreateNew 成功后才纳入统一保留／删除清单。</summary>
+    public FileStream CreateImageReport(string path)
+    {
+        if (_sealed) throw new InvalidOperationException("日志清单已经封存，不能创建差异图。");
+        path = ExportPolicy.Normalize(path);
+        ExportPolicy.RejectLinks(path);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path),
+            @"^VisualDiff__[0-9a-fA-F]{32}__G1-G(?:[2-9]|[1-9][0-9]+)\.png$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            throw new ArgumentException("只能创建本批视觉比较差异 PNG：" + path);
+        var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        _files.Add(path); _streams.Add(stream);
+        return stream;
+    }
     /// <summary>仅在已拒绝同名标记后登记原生操作的独占输出，未知状态须调用 Protect。</summary>
     public void ExpectNativeFile(string path)
     {

@@ -55,6 +55,8 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     private int _nameCount;
     /// <summary>实际候选根读取数，不含名称扫描及缓存命中。</summary>
     internal int RootReads { get; private set; }
+    /// <summary>视觉流程实际定位的候选来源数，不包含旧字段快照读取。</summary>
+    internal int VisualPrepares { get; private set; }
     /// <summary>按需创建的来源读取器数量。</summary>
     internal int ReadersCreated { get; private set; }
     /// <summary>未知来源、循环及索引失败均使整体范围不完整。</summary>
@@ -434,6 +436,36 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         }
         VerifySource(source);
         return new(entry, content);
+    }
+
+    /// <summary>只定位本批候选，不创建旧字段读取器；源身份、匿名状态及原名均须重新核对。</summary>
+    internal (Database Database, ObjectId Definition) LocateVisual(XrefBlockNameEntry entry)
+    {
+        var source = _sources.Values.SingleOrDefault(s => s.DwgNo == entry.Source.DwgNo && s.Key == entry.Source.Key)
+            ?? throw new InvalidOperationException("视觉候选来源不属于本次扫描。");
+        if (entry.IsAnonymous || !source.Targets.TryGetValue(entry.Name, out var id))
+            throw new InvalidOperationException("目标不是本次普通块候选。");
+        VerifyVisual(entry, id);
+        VisualPrepares++;
+        return (source.Database, id);
+    }
+
+    /// <summary>准备和绘制前后复核源库及目标，旁路文件变化不能转换为普通未验证后继续。</summary>
+    internal void VerifyVisual(XrefBlockNameEntry entry, ObjectId id)
+    {
+        _ensure();
+        var source = _sources.Values.SingleOrDefault(s => s.DwgNo == entry.Source.DwgNo && s.Key == entry.Source.Key)
+            ?? throw new Pn3DKit.Commands.XrefCheckStoppedException("候选来源已经变化。", new IOException("来源不在本批。"));
+        if (source.Error != null) throw new IOException(source.Error);
+        try { VerifySource(source); }
+        catch (IOException ex) { throw new Pn3DKit.Commands.XrefCheckStoppedException(ex.Message, ex); }
+        if (!id.IsValid || id.IsErased || !source.Targets.TryGetValue(entry.Name, out var indexed) || indexed != id)
+            throw new Pn3DKit.Commands.XrefCheckStoppedException("候选定义已失效或身份变化。", new IOException(entry.Name));
+        using var transaction = source.Database.TransactionManager.StartOpenCloseTransaction();
+        var block = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
+        if (block.IsAnonymous || !string.Equals(XrefBlockNames.RemoveSourceNamespace(block.Name, source.Prefixes),
+            entry.Name, StringComparison.OrdinalIgnoreCase))
+            throw new Pn3DKit.Commands.XrefCheckStoppedException("候选块名称或匿名状态已经变化。", new IOException(entry.Name));
     }
 
     /// <summary>名称扫描结束再次确认所有来源，不因只有唯一名称或匿名块而漏报磁盘变化。</summary>

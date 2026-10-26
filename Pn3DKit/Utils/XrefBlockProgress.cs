@@ -49,6 +49,19 @@ internal sealed class XrefBlockProgress
     internal static string ResultLabel(XrefBlockComparisonResult result) =>
         result.ResultText switch { "匹配" => "符合", "不匹配" => "不符合", _ => "未验证" };
 
+    /// <summary>中立报告的命令行文字保持原有三种结果。</summary>
+    internal static string ResultLabel(XrefBlockReportResult result) =>
+        result.ResultText switch { "匹配" => "符合", "不匹配" => "不符合", _ => "未验证" };
+
+    /// <summary>视觉结果同样在报告刷新后才输出，未知来源说明独立保留。</summary>
+    internal void Complete(XrefBlockReportResult result, Action<XrefBlockReportResult> append)
+    {
+        append(result);
+        Emit("块 " + OneLine(result.Name) + " " + ResultLabel(result)
+            + (result.Status == XrefBlockComparisonStatus.Different && !result.Complete ? "；同时存在未验证来源" : ""));
+        _current = null;
+    }
+
     /// <summary>空闲检查点约每三秒显示当前阶段，不创建线程或访问宿主。</summary>
     internal void Pulse()
     {

@@ -702,6 +702,51 @@ public sealed class XrefCatalogTests : IDisposable
         Assert.Equal(1, Database.Reads[child.Filename]);
     }
 
+    /// <summary>视觉候选只定位定义，不读取旧快照、使用索引或独立匿名根。</summary>
+    [Fact]
+    public void VisualLocationDoesNotReadContentSnapshots()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg");
+        main.Block("Valve"); main.Block("Unique"); child.Block("Valve"); child.Block("*U1").IsAnonymous = true;
+        main.Reference("B", child, child.Filename);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover();
+        var entries = catalog.ReadNames().Entries.Where(e => e.Name == "Valve").ToArray();
+        foreach (var entry in entries)
+        {
+            var location = catalog.LocateVisual(entry);
+            catalog.VerifyVisual(entry, location.Definition);
+            Assert.True(location.Definition.IsValid);
+        }
+        Assert.Equal(2, catalog.VisualPrepares); Assert.Equal(0, catalog.RootReads);
+        Assert.Equal(0, catalog.ReadersCreated); Assert.Equal(0, XrefBlockSnapshotReader.Created);
+    }
+
+    /// <summary>视觉准备前改名属于来源身份变化，不能降为普通未验证后继续。</summary>
+    [Fact]
+    public void VisualRenamedTargetStops()
+    {
+        var main = Source("A.dwg"); main.Block("Valve");
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(); var entry = catalog.ReadNames().Entries.Single();
+        main.Objects.Values.OfType<BlockTableRecord>().Single(b => b.Name == "Valve").Name = "Other";
+        Assert.Throws<Pn3DKit.Commands.XrefCheckStoppedException>(() => catalog.LocateVisual(entry));
+        Assert.Equal(0, catalog.VisualPrepares);
+    }
+
+    /// <summary>视觉绘制前源文件变化必须停止，不能继续使用过期的旁路内容。</summary>
+    [Fact]
+    public void VisualDiskChangeStops()
+    {
+        var main = Source("A.dwg"); var child = Source("b.dwg"); child.Block("Valve");
+        main.Reference("B", null, child.Filename);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        catalog.Discover(); var entry = catalog.ReadNames().Entries.Single();
+        File.AppendAllText(child.Filename, "change");
+        Assert.Throws<Pn3DKit.Commands.XrefCheckStoppedException>(() => catalog.LocateVisual(entry));
+        Assert.False(catalog.ScopeComplete);
+    }
+
     /// <summary>只清理本测试创建的替身文件和日志。</summary>
     public void Dispose()
     {

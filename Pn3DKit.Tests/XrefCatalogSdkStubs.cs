@@ -43,7 +43,7 @@ namespace Autodesk.AutoCAD.DatabaseServices
         internal readonly List<ObjectId> Items = [];
         internal Database? Loaded;
         internal int EntityEnumerations;
-        public string Name { get; } = name;
+        public string Name { get; set; } = name;
         public bool IsLayout { get; set; }
         public bool IsFromExternalReference { get; set; }
         public bool IsDependent { get; set; }

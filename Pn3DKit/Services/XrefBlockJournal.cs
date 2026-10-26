@@ -10,6 +10,7 @@ public sealed class XrefBlockJournal : IDisposable
     private readonly Stream _logStream, _sourceStream, _anonymousStream, _normalStream, _comparisonStream;
     private readonly StreamWriter _log, _sources, _anonymous, _normal, _comparison;
     private readonly string _directory;
+    private readonly RunLogFiles _files;
     private readonly TimeProvider _clock;
     private readonly Func<string, Stream> _createNameFile;
     private readonly Func<Guid> _newSourceId;
@@ -58,7 +59,7 @@ public sealed class XrefBlockJournal : IDisposable
         Func<string, Stream>? createReportFile = null)
     {
         directory = Validate(directory);
-        _directory = directory; _clock = clock;
+        _directory = directory; _clock = clock; _files = files;
         _createNameFile = createNameFile ?? files.CreateNew;
         _newSourceId = newSourceId ?? Guid.NewGuid;
         files.EnsureDirectory(directory);
@@ -84,7 +85,7 @@ public sealed class XrefBlockJournal : IDisposable
             _log.WriteLine("Pn3DKit | XREFBLOCKCHECK | 块名称统计");
             _log.WriteLine("主图：" + drawing);
             _log.WriteLine("开始时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
-            _log.WriteLine("先输出名称统计，再比较 dwg计数大于1的普通块二维内容；不绑定、重载或保存。");
+            _log.WriteLine("先输出名称统计，再比较 dwg计数大于1的普通块；比较方式见阶段日志，不绑定、重载或保存。");
             _log.WriteLine("来源索引：" + SourcesPath);
             _log.WriteLine("匿名统计：" + AnonymousPath + "\n普通块统计：" + NormalPath);
             _log.WriteLine("比较结果：" + ComparisonPath);
@@ -270,8 +271,23 @@ public sealed class XrefBlockJournal : IDisposable
         }, "输出名称统计");
     }
 
+    /// <summary>差异 PNG 与文字报告共用归属和致命故障标记，不允许图片失败后继续比较。</summary>
+    public void AppendVisualDifference(VisualDifference difference) => Report(() =>
+    {
+        string path = VisualDifferenceReport.Write(_directory, _files, difference);
+        _log.WriteLine("视觉差异图：" + path + " | 完整块名：" + difference.Name
+            + " | G1：dwgNo=" + difference.FirstSource.Source.DwgNo + " " + difference.FirstSource.Source.Drawing
+            + " | G" + difference.OtherGroup + "：dwgNo=" + difference.OtherSource.Source.DwgNo + " " + difference.OtherSource.Source.Drawing
+            + " | " + difference.Reason);
+        Flush();
+    }, "输出视觉差异图");
+
     /// <summary>候选完成后立即写一行三列结果；详细来源、分组、差异和错误保留在 LOG。</summary>
-    public void AppendComparison(XrefBlockComparisonResult result)
+    public void AppendComparison(XrefBlockComparisonResult result) =>
+        AppendComparison(XrefBlockReportResult.FromContent(result));
+
+    /// <summary>与比较方法无关的报告入口；视觉比较不伪造旧字段快照。</summary>
+    public void AppendComparison(XrefBlockReportResult result)
     {
         if (HasWriteFailure) throw new XrefBlockLogException("此前报告输出失败，停止后续比较。");
         Report(() =>
@@ -282,7 +298,7 @@ public sealed class XrefBlockJournal : IDisposable
                 _log.WriteLine("  来源 dwgNo=" + entry.Source.DwgNo + " " + entry.Source.Drawing);
             foreach (var group in result.Groups)
                 _log.WriteLine("  内容组" + group.Number + "："
-                    + string.Join("；", group.Definitions.Select(d => "dwgNo=" + d.Entry.Source.DwgNo + " " + d.Entry.Source.Drawing)));
+                    + string.Join("；", group.Entries.Select(e => "dwgNo=" + e.Source.DwgNo + " " + e.Source.Drawing)));
             string detail = string.Join("\n", result.Differences.Concat(result.Problems));
             if (detail.Length != 0) _log.WriteLine(detail);
             string dwgNo = string.Join("/", result.Entries.Select(e => e.Source.DwgNo).Distinct().OrderBy(number => number)
@@ -295,7 +311,12 @@ public sealed class XrefBlockJournal : IDisposable
 
     /// <summary>只使用内存完成结束汇总，源数据库已经关闭时也不再调用 SDK。</summary>
     public void Complete(XrefBlockScanResult result, XrefBlockStatistics statistics,
-        IReadOnlyList<XrefBlockComparisonResult>? comparisons = null, int rootReads = 0, int readers = 0)
+        IReadOnlyList<XrefBlockComparisonResult>? comparisons = null, int rootReads = 0, int readers = 0) =>
+        CompleteVisual(result, statistics, comparisons?.Select(XrefBlockReportResult.FromContent).ToArray(), rootReads, readers);
+
+    /// <summary>视觉比较结束只使用中立报告 DTO 及内存清单，不读取旧内容快照。</summary>
+    public void CompleteVisual(XrefBlockScanResult result, XrefBlockStatistics statistics,
+        IReadOnlyList<XrefBlockReportResult>? comparisons = null, int rootReads = 0, int readers = 0)
     {
         WriteStatistics(result.Inventory, statistics);
         Report(() =>
@@ -319,7 +340,7 @@ public sealed class XrefBlockJournal : IDisposable
             if (comparisons != null)
             {
                 _log.WriteLine("比较候选名称组：" + comparisons.Count
-                    + "；实际根读取：" + rootReads + "；来源内容读取器：" + readers);
+                    + "；实际候选来源准备：" + rootReads + "；绘制设备创建：" + readers);
                 _log.WriteLine("比较结论：" + (comparisons.Any(c => c.HasIssues)
                     ? "存在不匹配或未验证项，默认保留日志。" : "已完成候选均匹配；没有候选时无需内容比较。"));
                 foreach (var group in comparisons.GroupBy(c => c.ResultText))

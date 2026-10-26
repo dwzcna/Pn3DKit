@@ -85,7 +85,7 @@ internal sealed class RibbonController : IDisposable
         LargeButton("Pn3DKit.BatchExport", "PNDWGEXPORT", "批量导出CAD",
             "将当前 Plant 项目的 PnId 或 Piping 图纸导出为普通 DWG。", RibbonImages.Small, RibbonImages.Large),
         LargeButton("Pn3DKit.XREFBLOCKCHECK", "XREFBLOCKCHECK", "外部参照块名称统计",
-            "扫描主图及外参块名称，统计来源编号和图纸数；仅比较跨来源同名普通块的二维内容，不绑定、不重载、不保存。",
+            "扫描主图及外参块名称，仅对跨来源同名普通块按公共俯视视窗比较显示、颜色与线宽；不能可靠绘制时未验证。不绑定、不重载、不保存。",
             RibbonImages.XrefCheckSmall, RibbonImages.XrefCheckLarge));
 
     /// <summary>固定面板身份及标题，使用原生面板边界分区，不再添加手工分隔线。</summary>
