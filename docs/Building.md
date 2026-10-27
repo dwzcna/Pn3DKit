@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.34 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.34
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.35 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.35
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.34 -OutputDirectory artifacts/release/0.1.34
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.35 -OutputDirectory artifacts/release/0.1.35
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源代码，不加载 Autodesk；SDK 替身仅验证来源与生命周期。build/CadVisualPrototype、CadVisualHost、CadVisualProbe 是独立原生验证项目，不加入产品解决方案或单 DLL 载荷；使用授权目录及实例，不调用 Computer Use、不更改 CAD 安全设置。
@@ -90,9 +90,11 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.34/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.35/。
 
 ## 当前实现与验收
+
+0.1.35 类别显示名修复已通过 18 项定向回归（链接真实适配源码、使用最小 SDK 替身）和 SDK 编译。双配置全部回归、元数据、候选及发布状态见 Changlog.md 与 artifacts/validation/0.1.35/。中文实际返回值仍待授权项目 CAD 对照。
 
 已完成：0.1.3 图纸身份修复已独立提交；0.1.4 新增 REBUILDPNTAGBYCLASS。BatchRunGate 覆盖导出、批量检查、重建及异步保存；TagRebuildPolicy 负责预检分类、注册键重号及占用链冲突；TagRebuildBatch 负责单撤销组和逐对象回读；TagRebuildJournal 保存追加历史。SDK 适配位于 PlantTagRebuildAccess，只写 PnId.Tag，支持 SLINE 和管线组；PlantTagCatalogAccess 批量读取 PnPRow.ClassName 并缓存类别、格式和成员关联。
 
@@ -102,7 +104,7 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 
 0.1.29 已完成的 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
 
-未完成：离屏后端尚不完整等同 DWG 比较，非连续线型、遮罩和重叠排序不能可靠验证；真实项目的复杂显示、性能、Esc 原生调用之间的响应及 Bind → Insert 人工对照仍待验收。本版按最新授权仅本地提交，不创建 v0.1.34 或 Release；后续 0.1.35 验证后推送发布。
+未完成：当前项目 GetClassDisplayName 的实际中文返回值及四个入口／面板的 CAD 对照仍待复测。本轮类别修复只进行离线测试，不操作用户图纸。外参离屏后端的非连续线型、遮罩及重叠排序边界沿用 0.1.34 的未验证保护，不宣称完整 DWG 比较。按授权完成本版验证后普通推送 main／v0.1.35，由 Actions 创建正式 Release；不创建 v0.1.34 或该版 Release。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 
@@ -110,7 +112,7 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 
 RibbonController 在“Pn3D工具箱”中按顺序创建快速操作、位号检查、图纸操作三个原生 RibbonPanel，各有固定 Source.Id。Rows 用 RibbonRowPanel／RibbonRowBreak 组织三行：单个检查、本图检查／重建、项目检查／重建；首行不创建占位按钮，不增加手工 RibbonSeparator。所有小按钮 Width／MinWidth 为 128 DIP，统一由 Register 登记，保留既有按钮／选项卡 ID。七个位号命令使用 16 DIP 矢量，特性与导出为大图标，队列及忙碌逻辑保持。合成预览只证明命令分组和示意布局，原生 Ribbon 收缩、实际 DPI 及工作空间恢复待 CAD 复测。
 
-类别显示名称在 PlantTagCatalogAccess 中按项目部分及实际类别读取一次，使用类别表 GetTableAttributeValue(PnPDatabase.DisplayNameAttribute)，缓存到 PlantTagClassGroup.DisplayName。空值和普通异常回退 ClassName，OperationCanceledException 与 CAD UserBreak 继续中止批次。类别返回顺序使用 DisplayName／StringComparer.CurrentCultureIgnoreCase，再依次以 ClassName、PartName／StringComparer.Ordinal 稳定排序。四个批量检查、重建命令与无格式提示沿用同一清单。内部类名、格式、数据身份和日志不变；同名显示类别不合并。
+类别名称适配分在 PlantTagCatalogNames.cs（PlantTagCatalogAccess 的 partial），必须接收所属 Project。CAD 主线程先调用 part.GetClassDisplayName(className)，项目名称空白或普通读取错误时再读 db.Tables[className].GetTableAttributeValue(PnPDatabase.DisplayNameAttribute)，最终回退内部类名。OperationCanceledException 和 SDK UserBreak 继续中止；每级独立处理，项目读取成功不访问表。批量 Read 传已有 part，面板传 context.Part；名称缓存仍按项目部分与实际类别。四个本图／项目检查和重建清单共用扫描结果，DisplayName 仅用于标题和排序，不改变 ClassName、格式、身份或写入。
 
 RunPaths 统一以系统文档目录生成 Pn3DKit/用途/时间戳。RunLogFiles 在 CreateNew 成功后登记文件归属，记录本批新建末级目录和原生独占标记；所有流关闭并封存后才可按清单删除，不递归清理。LogRetentionPolicy 根据结构化最终结果判断默认值；LogRetentionPrompt 在命令末尾处理 Y／N／Esc，Session 入口通过当前文档命令上下文交互，批次租约覆盖清理。AutoCadHost 在原生回调状态未知或等待器清理失败时保护本批现场；普通错误仍可在安全交互时明确选择 N。该流程不接触离线验证产物。
 

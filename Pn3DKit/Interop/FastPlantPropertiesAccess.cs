@@ -69,7 +69,7 @@ internal static class FastPlantPropertiesAccess
             if (transaction.GetObject(id, OpenMode.ForRead) is not Entity entity) return Missing(specs, "目标不是实体。");
             string key = context.PartName + ":" + context.ClassName;
             if (!_names.TryGetValue(key, out string? name))
-                _names[key] = name = PlantTagCatalogAccess.ReadDisplayName(context.Links.GetPnPDatabase(), context.ClassName);
+                _names[key] = name = PlantTagCatalogAccess.ReadDisplayName(context.Part, context.Links.GetPnPDatabase(), context.ClassName);
             bool locked = true;
             string? stateError = null;
             try { locked = ((LayerTableRecord)transaction.GetObject(entity.LayerId, OpenMode.ForRead)).IsLocked; }

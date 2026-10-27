@@ -42,22 +42,8 @@ internal sealed record PlantTagScan(IReadOnlyList<PlantTagClassGroup> Groups,
 }
 
 /// <summary>从批量数据行取得实际类别，模型空间只用于限定直接图形范围。</summary>
-internal static class PlantTagCatalogAccess
+internal static partial class PlantTagCatalogAccess
 {
-    /// <summary>在 CAD 主线程读取类别表显示名称；普通读取错误回退类名，取消继续传播。</summary>
-    internal static string ReadDisplayName(PnPDatabase database, string className)
-    {
-        try
-        {
-            string name = database.Tables[className].GetTableAttributeValue(PnPDatabase.DisplayNameAttribute);
-            return string.IsNullOrWhiteSpace(name) ? className : name;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Autodesk.AutoCAD.Runtime.Exception ex)
-            when (ex.ErrorStatus == Autodesk.AutoCAD.Runtime.ErrorStatus.UserBreak)
-        { throw new OperationCanceledException("用户取消读取类别显示名称。", ex); }
-        catch (System.Exception) { return className; }
-    }
     /// <summary>图纸范围或整个项目范围的统一扫描；类别发现不调用 GetObjectClassname。</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static PlantTagScan Read(Database? drawing, Action ensure)
@@ -227,7 +213,7 @@ internal static class PlantTagCatalogAccess
                 values = values.Select(x => x with { CachedFormat = format, FormatKnown = true, FormatError = error }).ToList();
                 // 每个项目部分的实际类别只读取一次；后续列表及跳过提示使用缓存。
                 groups.Add(new(partName, category.Key, values, format != null, error)
-                { DisplayName = ReadDisplayName(db, category.Key) });
+                { DisplayName = ReadDisplayName(part, db, category.Key) });
             }
         }
         // 显示顺序遵循当前区域规则；同名类别再按内部身份稳定排序，不合并目标。

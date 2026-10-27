@@ -1,5 +1,21 @@
 # Pn3DKit 需求、实现与验证记录
 
+## 0.1.35（2026-10-27）
+
+### 变更与发布内容
+
+- 修复类别显示名称：共享 SDK 适配优先调用所属 Project.GetClassDisplayName(className)，项目名称空白或普通读取失败时回退类别表 DisplayName，再回退内部 ClassName。不硬编码 Primary／Secondary 或中文翻译。
+- 同时覆盖 CHECKPNTAGBYCLASS、REBUILDPNTAGBYCLASS、CHECKPROJECTPNTAGBYCLASS、REBUILDPROJECTPNTAGBYCLASS 的列表、无格式提示和缓存显示名，以及 PNFASTPANEL 类别标题。批量扫描传所属 part，面板传 context.Part；实际检索、分组、格式计算和写入仍使用内部类别身份。OperationCanceledException／SDK UserBreak 保持取消，不吞掉中断。
+- 本次正式发布同时包含此前本地提交：0.1.33 六类目录统一依赖 FILEDIA，外参来源固定总数、逐文件／逐块进度与即时结果；0.1.34 公共俯视视窗、双背景彩色像素及有效颜色／透明度／线宽核对、公共线宽位置编码、压缩归组与受控差异 PNG。Result.csv 保持三列及匹配／不匹配／未验证。
+- 外参视觉覆盖边界必须保留：当前后端不能可靠确认非连续线型、遮罩和重叠不同外观排序，相关项未验证；动态、三维、代理、字段、缺少资源等也未验证。授权合集.dwg 的 11 来源／684 名称／103 候选实际流程全部未验证，具体原因保留，不能称完整 DWG 比较准确性通过；32 项原生检查包含未验证保护。
+- 产品／信息版本 0.1.35，程序集／文件版本 0.1.35.0，十命令、九个不复制 SDK 参考、.NET 8／AMD64 和单 DLL 交付。本轮不连接或改动用户图纸；真实项目的主／次工艺管线中文显示名称、四入口及面板对照待 CAD 复测。
+- 按用户最新授权，0.1.34 仅本地提交且不创建标签／Release；0.1.35 验证后本地提交，普通推送 main 和 v0.1.35，沿用 Actions 创建正式 Release，回下载校验 DLL、ZIP 和 SHA256SUMS。
+
+### 验证
+
+- 新增 18 项定向回归通过，链接生产 PlantTagCatalogNames.cs 的真实适配逻辑，用最小只读 SDK 替身验证项目优先且不触碰表、任意类别与语言配置、空值／普通异常两层回退、缺表、不同项目部分、两级托管取消与 UserBreak。初步真实 SDK 编译零警告、零错误；不把替身中文当作当前项目实测。
+- 本轮最终 x64 Debug／Release 构建均零警告、零错误；两配置各 758 项全部通过，较 0.1.34 增加 18 项。核对四个批量入口的共享扫描与面板调用都传所属项目；两配置 0.1.35.0／信息 0.1.35、十命令、九个 E:\Autodesk SDK 引用／CopyLocal=false、.NET 8／AMD64、单 DLL 通过。Debug 资产缓存曾出现一次非阻断 I/O 提示，编译及全部测试通过，未用缓存诊断冒充功能失败。候选 ZIP、内外 SHA-256 通过；证据 artifacts/validation/0.1.35/，候选 artifacts/release/0.1.35/。远端发布状态及回下载核验另存证据，不把本机通过当作发布完成。
+
 ## 0.1.34（2026-10-27）
 
 ### 变更与覆盖边界
