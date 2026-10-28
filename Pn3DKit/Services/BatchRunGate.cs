@@ -13,10 +13,15 @@ public static class BatchRunGate
     /// <summary>仅释放本次持有的租约，重复释放不会解锁后来者。</summary>
     private sealed class Lease : IDisposable
     {
+        internal Lease() => Pn3DKit.Utils.TagFormatCache.Begin();
         private int _disposed;
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0) Interlocked.Exchange(ref _running, 0);
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                Pn3DKit.Utils.TagFormatCache.End();
+                Interlocked.Exchange(ref _running, 0);
+            }
         }
     }
 }

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- 仅用于主线程原生验证，不编入产品命令或发布载荷。 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <AssemblySearchPaths>{HintPathFromItem};$(AutoCadManagedRoot);$(PlantManagedRoot);{TargetFrameworkDirectory};{RawFileName}</AssemblySearchPaths>
+    <PlatformTarget>x64</PlatformTarget><Platforms>x64</Platforms>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>Pn3DKit.CadMaintenanceProbe</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Pn3DKit"><HintPath>$(ProductAssemblyPath)</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcCoreMgd"><HintPath>$(AutoCadManagedRoot)/AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>$(AutoCadManagedRoot)/AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcMgd"><HintPath>$(AutoCadManagedRoot)/AcMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPDataObjects"><HintPath>$(PlantManagedRoot)/PnPDataObjects.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

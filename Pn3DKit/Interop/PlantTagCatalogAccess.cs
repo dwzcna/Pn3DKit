@@ -178,7 +178,21 @@ internal static partial class PlantTagCatalogAccess
             }
             if (partName == "PnId" && db.Tables.Contains("PipeLineGroup"))
             {
-                foreach (var row in db.Tables["PipeLineGroup"].Select())
+                var groupIds = new HashSet<int>();
+                foreach (var pipe in rowMap.Values.Where(row => row.Kind == TagTargetKind.LineSegment))
+                {
+                    Check();
+                    try
+                    {
+                        foreach (int groupId in links.GetRelatedRowIds("PipeLineGroupRelationship", "PipeLine",
+                            pipe.RowId, "PipeLineGroup")) groupIds.Add(groupId);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (System.Exception ex) { warnings.Add($"管线 {pipe.RowId} 反查管线组失败：{ex.Message}"); }
+                }
+                var groupRows = groupIds.Count == 0 ? Array.Empty<PnPRow>()
+                    : db.Tables["PipeLineGroup"].Select(null, new PnPRowIdArray(groupIds.Order().ToList()), true, false, false);
+                foreach (var row in groupRows)
                 {
                     Check();
                     int id = Convert.ToInt32(row["PnPID"]);

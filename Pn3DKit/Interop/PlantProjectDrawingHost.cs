@@ -43,7 +43,6 @@ internal sealed class PlantProjectDrawingHost(AutoCadHost cad, PlantProjectTagAc
             var scan = PlantTagCatalogAccess.Read(db, project.EnsureContext);
             var local = new PlantTagRebuildAccess(document, scan.IsCurrent);
             local.IndexTargets(scan);
-            project.RefreshIndex();
             var found = scan.Targets.Select(x => x.Key).ToHashSet();
             foreach (var previous in synchronize)
             {
@@ -104,7 +103,7 @@ internal sealed class PlantProjectDrawingHost(AutoCadHost cad, PlantProjectTagAc
         public string WriteAndRead(TagRebuildCandidate item)
         {
             string actual = local.WriteAndRead(item);
-            project.RefreshIndex();
+            project.RecordWrite(item, actual);
             return actual;
         }
         /// <inheritdoc />

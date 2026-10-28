@@ -179,8 +179,24 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
                 return row >= 0 && row != c.RowId ? [c.PartName + ":" + row] : [];
             }
             if (!_complete) throw new InvalidOperationException("完整项目索引不可用。" + string.Join("；", _indexErrors));
-            return _tags.TryGetValue(c.PartName + "\n" + item.Check.ExpectedTag, out var owners)
-                ? owners.Where(x => x != item.Key).ToArray() : [];
+            var ids = ProjectTagLookup.Owners(item.Check.ExpectedTag, c.RowId, filter =>
+            {
+                var found = new List<(int Id, string Tag)>();
+                foreach (PnPTable table in c.Links.GetPnPDatabase().Tables)
+                {
+                    EnsureContext();
+                    if (!table.Columns.Contains("Tag")) continue;
+                    foreach (PnPRow row in table.Select(filter))
+                    {
+                        EnsureContext();
+                        int id = Convert.ToInt32(row["PnPID"]);
+                        var context = c with { RowId = id, ClassName = row.ClassName };
+                        found.Add((id, PlantTagRebuildAccess.ReadTag(context)));
+                    }
+                }
+                return found;
+            });
+            return ids.Select(id => c.PartName + ":" + id).ToArray();
         }
         catch (System.Exception ex) { throw new InvalidOperationException(Error(ex), ex); }
     }
@@ -200,7 +216,7 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
             c.Links.AcceptChanges();
             string actual = PlantTagRebuildAccess.ReadTag(c);
             if (HasPendingChanges()) throw new InvalidOperationException("提交后仍有未知待提交修改，停止并保留现场。");
-            RefreshIndex();
+            RecordWrite(item, actual);
             return actual;
         }
         catch (System.Exception ex)
@@ -210,6 +226,23 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
             catch (System.Exception read) { actual = "无法回读：" + Error(read); }
             throw new InvalidOperationException(Error(ex) + "；实际 Tag：" + actual + "；不自动 Reject 或回滚", ex);
         }
+    }
+
+    /// <summary>成功回读后只更新本行缓存；写前占用仍以 SDK 当前查询为准。</summary>
+    internal void RecordWrite(TagRebuildCandidate item, string actual)
+    {
+        EnsureContext();
+        var context = Current(item.Key).Context;
+        string oldKey = context.PartName + "\n" + item.Check.Subject.ExistingTag;
+        if (_tags.TryGetValue(oldKey, out var previous))
+        {
+            previous.RemoveAll(owner => owner == item.Key);
+            if (previous.Count == 0) _tags.Remove(oldKey);
+        }
+        if (actual.Length == 0) return;
+        string newKey = context.PartName + "\n" + actual;
+        if (!_tags.TryGetValue(newKey, out var owners)) _tags[newKey] = owners = [];
+        if (!owners.Contains(item.Key)) owners.Add(item.Key);
     }
 
     /// <summary>保留 CAD 与 DataLinks 状态码。</summary>

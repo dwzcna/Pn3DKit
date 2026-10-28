@@ -88,6 +88,10 @@ internal static class PlantTagCheckAccess
         catch (System.Exception ex) { return new(subject, "", TagCheckStatus.Error, [], ex.Message); }
     }
 
+    /// <summary>纯格式元数据副本；不持有 SDK 解析器或可变 SDK 结构。</summary>
+    private sealed record FieldDefinition(FormatSource meSource, bool mbAutogen, string? msPropertyName,
+        string? msClassOrCategory, string? msFormatCharacters, bool mbUseMate, bool mbOptional);
+
     /// <summary>按 SDK 拆出的旧值读取当前属性；数字字段直接格式化原值，自动编号沿用原 Tag 片段。</summary>
     /// <remarks>N／NN／NNN 使用 FormatNumerals；其余片段 Evaluate 与 RebuildTagValue 不保证无副作用。</remarks>
     private static IReadOnlyList<TagCheckField> ReadFields(FormatToolsUtil tools, ObjectId objectId,
@@ -95,7 +99,7 @@ internal static class PlantTagCheckAccess
     {
         if (!FormatStringUtils.IsValid(format))
             throw new InvalidOperationException("位号格式无效：" + format);
-        var tokens = Regex.Matches(format, @"#\([^()]*\)");
+        var tokens = TagFormatCache.Tokens(format);
         string? Evaluate(string token) => objectId.IsNull
             ? FormatStringUtils.Evaluate(token, context.RowId, context.Links)
             : FormatStringUtils.Evaluate(token, objectId);
@@ -112,10 +116,15 @@ internal static class PlantTagCheckAccess
         for (int i = 0; i < tokens.Count; i++)
         {
             string token = tokens[i].Value;
-            var definitions = tools.Tokenize(token);
-            if (definitions == null || definitions.Length != 1)
-                throw new InvalidOperationException("无法可靠解析格式片段：" + token);
-            var definition = definitions[0];
+            var definition = TagFormatCache.Get(token, () =>
+            {
+                var definitions = tools.Tokenize(token);
+                if (definitions == null || definitions.Length != 1)
+                    throw new InvalidOperationException("无法可靠解析格式片段：" + token);
+                var item = definitions[0];
+                return new FieldDefinition(item.meSource, item.mbAutogen, item.msPropertyName,
+                    item.msClassOrCategory, item.msFormatCharacters, item.mbUseMate, item.mbOptional);
+            });
             var value = values[i];
             if (definition.meSource != value.meSource || definition.mbAutogen != value.mbAutogen
                 || !string.Equals(definition.msPropertyName, value.msPropertyName, StringComparison.Ordinal)

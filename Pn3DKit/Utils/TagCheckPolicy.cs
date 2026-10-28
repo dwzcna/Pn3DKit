@@ -76,7 +76,7 @@ public static class TagCheckPolicy
     /// <remarks>无法对应字段或字段边界不可靠时抛出异常，不推测自动编号。</remarks>
     public static string Reconstruct(string format, string existingTag, IReadOnlyList<TagCheckField> fields)
     {
-        var matches = Regex.Matches(format, @"#\([^()]*\)");
+        var matches = TagFormatCache.Tokens(format);
         if (matches.Count != fields.Count)
             throw new InvalidOperationException("SDK 拆分字段数与格式片段数不符，无法可靠重建。");
         string Render(bool current)
