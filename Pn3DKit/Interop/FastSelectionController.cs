@@ -31,8 +31,9 @@ internal sealed class FastSelectionController : IDisposable
     private CatalogLease? _catalogPending;
     private (PnUnifiedValueRequest Request, EditLease Lease)? _unifyPending;
     private bool _dirty = true, _paused, _inside, _disposed, _writing, _applyingValue, _unifying;
-    // 同步写入事件在下一次完整 Capture 中复核，不把句柄作为身份。
+    // 同步写入事件登记到目标集合，未知事件回退完整复核，不把句柄作为身份。
     private long _epoch;
+    private readonly HashSet<ObjectId> _writeChanges = [];
     private string _notice = "";
 
     /// <summary>事件只使快照过期，SDK 属性查询统一延迟到 Idle 或受控命令上下文。</summary>
@@ -52,7 +53,7 @@ internal sealed class FastSelectionController : IDisposable
     internal void RequestRefresh() => Invalidate(true);
     private void Invalidate(bool read)
     {
-        _epoch++; _dirty = read; _batch.Invalidate(); _access = null; _tickets.Clear(); _readObjects.Clear(); _single = null;
+        _epoch++; _dirty = read; _batch.Invalidate(); _access = null; _tickets.Clear(); _readObjects.Clear(); _single = null; _writeChanges.Clear();
         _view.SuspendEditing(); // 事件发生即撤销草稿，不等下一次 Idle，避免旧对象输入被带到新票据。
         _view.SetCatalogAvailability(false, "选择或属性状态已变化，等待读取完成。");
     }
@@ -61,15 +62,15 @@ internal sealed class FastSelectionController : IDisposable
     private void Changed(object? sender, EventArgs args) => RequestRefresh();
     private void DocumentChanged(object? sender, DocumentCollectionEventArgs args) => RequestRefresh();
     private void CommandChanged(object? sender, CommandEventArgs args) => RequestRefresh();
-    /// <summary>同步写入期间的数据库事件要求重新核对；下个目标前全量回读，不让自身刷新使整批误过期。</summary>
+    /// <summary>同步写入期间的数据库事件要求重新核对；下个目标前复核受影响目标，不让自身刷新使整批误过期。</summary>
     private void ObjectChanged(object? sender, ObjectEventArgs args)
     {
-        if (_applyingValue) { _dirty = true; return; } // 包含 SDK 对关联注释的刷新；下一步 Capture 仍核对所有目标。
+        if (_applyingValue) { _dirty = true; _writeChanges.Add(args.DBObject.ObjectId); return; } // 包含 SDK 对关联注释的刷新；下一步按关联数据行复核，未知事件全量回退。
         RequestRefresh();
     }
     private void ObjectErased(object? sender, ObjectErasedEventArgs args)
     {
-        if (_applyingValue) { _dirty = true; return; } // 若目标本身失效，紧接的回读／Capture 会拒绝继续。
+        if (_applyingValue) { _dirty = true; _writeChanges.Add(args.DBObject.ObjectId); return; } // 若目标本身失效，紧接的回读及事件复核会拒绝继续。
         RequestRefresh();
     }
 
@@ -384,6 +385,7 @@ internal sealed class FastSelectionController : IDisposable
                 var spec = _view.ReadSpecs().FirstOrDefault(x => x.Id == request.RowId)
                     ?? throw new InvalidOperationException("属性行已删除。");
                 var adapter = new SelectionEditHost(this, edit, document, spec, new FastPropertyAccess(busy: false));
+                _writeChanges.Clear();
                 var outcome = PnPropertyEditBatch.Run(edit.Contexts, request.Value, adapter);
                 if (outcome.Items.Any(x => x.State is PnPropertyWriteState.Updated or PnPropertyWriteState.Failed))
                 {
@@ -427,25 +429,40 @@ internal sealed class FastSelectionController : IDisposable
             throw new InvalidOperationException("属性路径已变化，编辑已过期。");
     }
 
-    /// <summary>在协调器持有的同一文档锁内逐次重新读取所有目标；不复用聚合后的显示值作为原值。</summary>
+    /// <summary>在协调器持有的同一文档锁内提供全量预检及逐数据行局部复核；不复用聚合后的显示值作为原值。</summary>
     private sealed class SelectionEditHost(FastSelectionController owner, EditLease edit, Document document,
         PnPropertySpec spec, FastPropertyAccess access) : IPnPropertyEditHost<ObjectId, ObjectId>
     {
+        private bool _selectionVerified;
+        private readonly Dictionary<ObjectId, PnEditContext<ObjectId, ObjectId>> _contexts = edit.Contexts.ToDictionary(x => x.Target);
+        private readonly Dictionary<string, ObjectId[]> _aliases = edit.Contexts.GroupBy(x => x.TargetKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Target).ToArray(), StringComparer.Ordinal);
+
+        public void EnsureContext() => EnsureSelection();
         private void EnsureSelection()
         {
             owner.EnsureEdit(edit);
+            if (_selectionVerified) return;
             var selected = Selection(document);
-            if (selected.Length != edit.Contexts.Count || !selected.ToHashSet().SetEquals(edit.Contexts.Select(x => x.Target)))
+            if (selected.Length != edit.Contexts.Count || !selected.ToHashSet().SetEquals(_contexts.Keys))
                 throw new InvalidOperationException("选择对象已变化，编辑已过期。");
+            _selectionVerified = true;
         }
 
         public IReadOnlyList<PnEditContext<ObjectId, ObjectId>> Capture()
         {
+            _selectionVerified = false;
+            return CaptureTargets(_contexts.Keys.ToArray());
+        }
+
+        public IReadOnlyList<PnEditContext<ObjectId, ObjectId>> CaptureTargets(IReadOnlyList<ObjectId> targets)
+        {
             EnsureSelection();
             using var transaction = document.Database.TransactionManager.StartOpenCloseTransaction();
-            return edit.Contexts.Select(expected =>
+            return targets.Select(target =>
             {
-                var item = access.Read(expected.Target, document, transaction, [spec]);
+                var expected = _contexts[target];
+                var item = access.Read(target, document, transaction, [spec]);
                 var cell = item.Cells[0];
                 var permission = cell.Value.Kind == FastValueKind.Value ? cell.Permission
                     : PnEditPermission.ReadOnly(cell.Value.Detail ?? "属性已不存在或无法读取。");
@@ -453,6 +470,21 @@ internal sealed class FastSelectionController : IDisposable
                     spec.Id, spec.Revision, PnPropertyPolicy.Normalize(spec.Input, out _) ?? "", item.TargetKey,
                     cell.Value.Raw, edit.Contexts.Count, permission);
             }).ToArray();
+        }
+
+        public IReadOnlyList<PnEditContext<ObjectId, ObjectId>>? CaptureChanges()
+        {
+            EnsureSelection();
+            var changes = owner._writeChanges.ToArray(); owner._writeChanges.Clear();
+            var targets = new HashSet<ObjectId>();
+            foreach (var changed in changes)
+            {
+                if (_contexts.ContainsKey(changed)) { targets.Add(changed); continue; }
+                string? key = access.RelatedDataKey(changed);
+                if (key == null || !_aliases.TryGetValue(key, out var aliases)) return null;
+                targets.UnionWith(aliases);
+            }
+            return CaptureTargets(targets.ToArray());
         }
 
         public PnPropertyWritePlan<ObjectId> Prepare(PnEditContext<ObjectId, ObjectId> target, string value)

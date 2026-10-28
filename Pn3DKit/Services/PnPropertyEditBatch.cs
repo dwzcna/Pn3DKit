@@ -8,6 +8,12 @@ public interface IPnPropertyEditHost<TIdentity, TTarget> where TTarget : notnull
 {
     /// <summary>在同一文档锁内重新读取完整选择与逐对象许可；状态无效时抛出具体异常。</summary>
     IReadOnlyList<PnEditContext<TIdentity, TTarget>> Capture();
+    /// <summary>利用选择版本核对批次上下文，不逐次读取整个选择集合。</summary>
+    void EnsureContext();
+    /// <summary>仅读取指定目标；仍分别核对真实关联、原值及权限。</summary>
+    IReadOnlyList<PnEditContext<TIdentity, TTarget>> CaptureTargets(IReadOnlyList<TTarget> targets);
+    /// <summary>读取同步写入事件影响的目标；空引用表示出现未知变化，必须全量复核。</summary>
+    IReadOnlyList<PnEditContext<TIdentity, TTarget>>? CaptureChanges();
     /// <summary>只读校验新值并返回真实数据行及登记身份；不得试写探测权限。</summary>
     PnPropertyWritePlan<TTarget> Prepare(PnEditContext<TIdentity, TTarget> target, string value);
     /// <summary>再次复核后仅写一条实际数据行并立即回读；失败抛异常，不保证 Plant 缓存回滚。</summary>
@@ -54,42 +60,68 @@ public static class PnPropertyEditBatch
         }
 
         string message = "";
-        foreach (var group in expected.GroupBy(x => x.TargetKey, StringComparer.Ordinal).Select(x => x.ToArray()))
+        var targetIndices = expected.Select((item, index) => (item.Target, index)).ToDictionary(x => x.Target, x => x.index);
+        var groups = expected.Select((item, index) => (item.TargetKey, index)).GroupBy(x => x.TargetKey, StringComparer.Ordinal)
+            .Select(g => g.Select(x => x.index).ToArray()).ToArray();
+        void ValidatePartial(IReadOnlyList<PnEditContext<TIdentity, TTarget>> current)
+        {
+            var subset = current.Select(item => targetIndices.TryGetValue(item.Target, out int index) ? expected[index]
+                : throw new InvalidOperationException("变更对象不属于本次编辑票据。")).ToArray();
+            string? error = PnPropertyEditPolicy.ValidateTargets(subset, current);
+            if (error != null) throw new InvalidOperationException(error);
+        }
+        foreach (var indices in groups)
         {
             try
             {
-                Validate(expected, host.Capture());
-                foreach (var target in group)
+                host.EnsureContext();
+                var changes = host.CaptureChanges();
+                if (changes == null) Validate(expected, host.Capture());
+                else ValidatePartial(changes);
+                var targets = indices.Select(i => expected[i].Target).ToArray();
+                var current = host.CaptureTargets(targets);
+                if (current.Count != targets.Length || !current.Select(x => x.Target).ToHashSet().SetEquals(targets))
+                    throw new InvalidOperationException("当前数据行的关联对象读取不完整。");
+                ValidatePartial(current);
+                foreach (int index in indices)
                 {
+                    var target = expected[index];
                     var fresh = host.Prepare(target, value);
                     VerifyPlan(target, value, fresh);
                     if (fresh != prepared[target.Target]) throw new InvalidOperationException("写入计划或位号登记身份已变化。");
                 }
-                bool unchanged = group.All(x => x.Original == value);
+                bool unchanged = indices.All(i => PnPropertyValuePolicy.Equivalent(prepared[expected[i].Target], expected[i].Original));
                 if (!unchanged)
                 {
-                    string actual = host.Write(prepared[group[0].Target]);
-                    if (actual != value) throw new InvalidOperationException("回读不符，实际值：" + actual);
+                    var plan = prepared[expected[indices[0]].Target];
+                    string actual = host.Write(plan);
+                    if (!PnPropertyValuePolicy.Equivalent(plan, actual))
+                        throw new InvalidOperationException("回读不符，实际值：" + actual);
                 }
-                foreach (var target in group)
+                var actuals = new Dictionary<int, FastPropertyValue>();
+                foreach (int index in indices)
                 {
+                    var target = expected[index];
                     var actual = host.ReadActual(target.Target);
-                    if (actual.Kind != FastValueKind.Value || actual.Raw != value)
+                    if (actual.Kind != FastValueKind.Value || !PnPropertyValuePolicy.Equivalent(prepared[target.Target], actual.Raw))
                         throw new InvalidOperationException(host.Label(target.Target) + " 回读不符：" + actual.Display + " " + actual.Detail);
+                    actuals.Add(index, actual);
                 }
-                for (int i = 0; i < results.Length; i++)
-                    if (results[i].DataKey == group[0].TargetKey)
-                    {
-                        results[i] = results[i] with { Actual = value, State = unchanged ? PnPropertyWriteState.Unchanged : PnPropertyWriteState.Updated, Detail = "" };
-                        expected[i] = expected[i] with { Original = value };
-                    }
+                foreach (int index in indices)
+                {
+                    var actual = actuals[index];
+                    results[index] = results[index] with { Actual = actual.Raw, ActualIsNull = actual.Raw == null,
+                        State = unchanged ? PnPropertyWriteState.Unchanged : PnPropertyWriteState.Updated, Detail = "" };
+                    expected[index] = expected[index] with { Original = actual.Raw };
+                }
             }
             catch (Exception ex)
             {
                 message = "已停止后续写入；不假定 Plant 数据已回滚：" + ex.Message;
+                var failed = indices.ToHashSet();
                 for (int i = 0; i < results.Length; i++)
                 {
-                    if (results[i].DataKey == group[0].TargetKey)
+                    if (failed.Contains(i))
                     {
                         FastPropertyValue actual;
                         try { actual = host.ReadActual(results[i].Target); }
@@ -107,7 +139,7 @@ public static class PnPropertyEditBatch
         }
         if (message.Length == 0)
         {
-            try { Validate(expected, host.Capture()); }
+            try { host.EnsureContext(); Validate(expected, host.Capture()); }
             catch (Exception ex)
             {
                 message = "写入后最终复核失败，请核对实际数据：" + ex.Message;
@@ -116,7 +148,7 @@ public static class PnPropertyEditBatch
                     FastPropertyValue actual;
                     try { actual = host.ReadActual(results[i].Target); }
                     catch (Exception read) { actual = FastPropertyValue.Error(read.Message); }
-                    if (actual.Kind != FastValueKind.Value || actual.Raw != value)
+                    if (actual.Kind != FastValueKind.Value || !PnPropertyValuePolicy.Equivalent(prepared[results[i].Target], actual.Raw))
                         results[i] = results[i] with { State = PnPropertyWriteState.Failed,
                             Actual = actual.Kind == FastValueKind.Value ? actual.Raw : null,
                             ActualIsNull = actual.Kind == FastValueKind.Value && actual.Raw == null,

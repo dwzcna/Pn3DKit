@@ -247,6 +247,60 @@ public sealed class PnPropertyEditTests
         Assert.True(result.Items[0].ActualIsNull); Assert.Contains("实际：(null)", result.Details);
     }
 
+    /// <summary>普通目标写入的SDK目标读取数为线性，不随每个数据行全量回读。</summary>
+    [Theory] [InlineData(10)] [InlineData(100)] [InlineData(1000)]
+    public void TargetReadsAreLinear(int count)
+    {
+        var host = new Host(count); var snapshot = host.Snapshot();
+        host.FullCaptures = 0; host.TargetReads = 0;
+        var result = PnPropertyEditBatch.Run(snapshot, "统一", host);
+        Assert.Equal(count, host.Writes.Count); Assert.Empty(result.Message);
+        Assert.Equal(3, host.FullCaptures);
+        Assert.Equal(4 * count, host.TargetReads);
+    }
+
+    /// <summary>自身同步事件只追加线性目标读取，不会使已成功写入的期望值误过期。</summary>
+    [Theory] [InlineData(10)] [InlineData(100)]
+    public void OwnEventsRemainLinear(int count)
+    {
+        var host = new Host(count);
+        host.AfterWrite = id => host.Changed.Add(id);
+        var snapshot = host.Snapshot(); host.TargetReads = 0; host.FullCaptures = 0;
+        var result = PnPropertyEditBatch.Run(snapshot, "统一", host);
+        Assert.Empty(result.Message); Assert.Equal(count, host.Writes.Count);
+        Assert.Equal(3, host.FullCaptures); Assert.Equal(5 * count - 1, host.TargetReads);
+    }
+
+    /// <summary>未知同步事件触发全量复核，发现待写目标变化即停止。</summary>
+    [Fact]
+    public void UnknownEventUsesFullRecheck()
+    {
+        var host = new Host(3);
+        host.AfterWrite = id => { if (id == 1) { host.Values[3] = "外部"; host.UnknownChange = true; } };
+        var result = PnPropertyEditBatch.Run(host.Snapshot(), "新值", host);
+        Assert.Single(host.Writes); Assert.Contains("已停止", result.Message);
+    }
+
+    /// <summary>已归类事件在下个目标前复核，不等待整批完成。</summary>
+    [Fact]
+    public void ChangedPriorTargetIsCheckedBeforeNextWrite()
+    {
+        var host = new Host(3);
+        host.AfterWrite = id => { if (id == 1) { host.Values[3] = "外部"; host.Changed.Add(3); } };
+        var result = PnPropertyEditBatch.Run(host.Snapshot(), "新值", host);
+        Assert.Single(host.Writes); Assert.Contains("已停止", result.Message);
+    }
+
+    /// <summary>数值规范化后按列类型通过，最终票据记录实际文本而非请求文本。</summary>
+    [Fact]
+    public void NumericNormalizedReadbackUsesActualValue()
+    {
+        var host = new Host(2) { ColumnType = typeof(int), NormalizeWrite = _ => "1" };
+        var result = PnPropertyEditBatch.Run(host.Snapshot(), "01", host);
+        Assert.Empty(result.Message); Assert.Equal(2, host.Writes.Count);
+        Assert.All(result.Items, row => { Assert.Equal("1", row.Actual); Assert.Equal("01", row.Requested); Assert.Equal(PnPropertyWriteState.Updated, row.State); });
+    }
+
     private sealed class Host : IPnPropertyEditHost<int, int>
     {
         internal List<PnEditContext<int, int>> Current { get; } = [];
@@ -255,6 +309,11 @@ public sealed class PnPropertyEditTests
         internal bool ReverseCapture, RegisterTags, SeparateRegistries, ProjectConflict, FailAfterChange;
         internal int PrepareFailure, WriteFailure, MismatchedWrite, PreparedBeforeFirstWrite;
         internal Action<int>? AfterWrite;
+        internal int FullCaptures, TargetReads;
+        internal Type? ColumnType;
+        internal Func<string, string>? NormalizeWrite;
+        internal bool UnknownChange;
+        internal readonly HashSet<int> Changed = [];
         private readonly HashSet<int> _prepared = [];
 
         internal Host(int count)
@@ -269,8 +328,20 @@ public sealed class PnPropertyEditTests
         internal PnEditContext<int, int>[] Snapshot() => Capture().ToArray();
         public IReadOnlyList<PnEditContext<int, int>> Capture()
         {
+            FullCaptures++; TargetReads += Current.Count;
             var items = Current.Select(x => x with { Original = Values[x.Target] }).ToArray();
             return ReverseCapture ? items.Reverse().ToArray() : items;
+        }
+        public void EnsureContext() { }
+        public IReadOnlyList<PnEditContext<int,int>> CaptureTargets(IReadOnlyList<int> targets)
+        {
+            TargetReads += targets.Count;
+            return targets.Select(target => Current.Single(x => x.Target == target) with { Original = Values[target] }).ToArray();
+        }
+        public IReadOnlyList<PnEditContext<int,int>>? CaptureChanges()
+        {
+            if (UnknownChange) { UnknownChange = false; return null; }
+            var targets = Changed.ToArray(); Changed.Clear(); return CaptureTargets(targets);
         }
         public PnPropertyWritePlan<int> Prepare(PnEditContext<int, int> target, string value)
         {
@@ -278,14 +349,14 @@ public sealed class PnPropertyEditTests
             if (target.Target == PrepareFailure) throw new InvalidOperationException(Label(target.Target) + "：字段长度超限");
             if (ProjectConflict) throw new InvalidOperationException("项目登记冲突");
             return new(target.Target, target.TargetKey, target.Original, value, RegisterTags
-                ? new("PnId", SeparateRegistries ? "Registry" + target.Target : "Registry", value) : null);
+                ? new("PnId", SeparateRegistries ? "Registry" + target.Target : "Registry", value) : null) { ValueType = ColumnType, ValueCulture = "en-US" };
         }
         public string Write(PnPropertyWritePlan<int> plan)
         {
             if (Writes.Count == 0) PreparedBeforeFirstWrite = _prepared.Count;
             Writes.Add(plan.Target);
             if (plan.Target == WriteFailure && !FailAfterChange) throw new InvalidOperationException("DLM_DUPLICATED_TAG");
-            string actual = plan.Target == MismatchedWrite ? "SDK 实际值" : plan.Value;
+            string actual = plan.Target == MismatchedWrite ? "SDK 实际值" : NormalizeWrite?.Invoke(plan.Value) ?? plan.Value;
             foreach (var alias in Current.Where(x => x.TargetKey == plan.DataKey)) Values[alias.Target] = actual;
             AfterWrite?.Invoke(plan.Target);
             if (plan.Target == WriteFailure) throw new InvalidOperationException("DLM_DUPLICATED_TAG");

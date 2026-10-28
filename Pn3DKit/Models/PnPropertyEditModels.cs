@@ -5,7 +5,13 @@ public sealed record PnPropertyRegistration(string Part, string Registry, string
 
 /// <summary>只读预检的写入计划，不持有 SDK 对象；DataKey 标识项目中的同一实际数据行。</summary>
 public sealed record PnPropertyWritePlan<TTarget>(TTarget Target, string DataKey, string? Original, string Value,
-    PnPropertyRegistration? Registration = null);
+    PnPropertyRegistration? Registration = null)
+{
+    /// <summary>SDK 列类型；缺失或字符串时继续严格比较原始文本。</summary>
+    public Type? ValueType { get; init; }
+    /// <summary>预检使用的解析区域，提交期间不随线程区域变化。</summary>
+    public string ValueCulture { get; init; } = "";
+}
 
 /// <summary>逐对象实际处理状态；失败不意味着 Plant 数据已经回滚。</summary>
 public enum PnPropertyWriteState { Updated, Unchanged, Failed, NotExecuted }

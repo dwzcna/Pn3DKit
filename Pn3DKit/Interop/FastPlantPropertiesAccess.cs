@@ -24,6 +24,14 @@ internal static class FastPlantPropertiesAccess
         return new Reader(project != null, () => ReferenceEquals(project, PlantApplication.CurrentProject), busy);
     }
 
+    /// <summary>只定位写入事件关联的数据行，不读取属性值或权限。</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static string? RelatedDataKey(ObjectId id)
+    {
+        var context = PlantTagFormatAccess.Locate(id);
+        return context == null ? null : context.PartName + ":" + context.RowId + ":" + context.ClassName;
+    }
+
     private sealed class Reader(bool hasProject, Func<bool> isCurrent, bool busy) : IFastPlantProperties
     {
         private readonly Dictionary<string, string> _names = new(StringComparer.Ordinal);
@@ -195,7 +203,7 @@ internal static class FastPlantPropertiesAccess
                 registration = new(context.PartName, registry, candidate);
             }
             return (context, property, new(id, context.PartName + ":" + context.RowId + ":" + context.ClassName,
-                original, value, registration));
+                original, value, registration) { ValueType = column.ColumnType, ValueCulture = CultureInfo.CurrentCulture.Name });
         }
 
         /// <summary>写入前再次验证，立即回读及核对 Tag 登记；整批结束后由协调器统一 Regen。</summary>
@@ -221,11 +229,11 @@ internal static class FastPlantPropertiesAccess
                     transaction.Commit();
                 }
                 string? actual = ReadValue(context, property);
-                if (actual != value) throw new InvalidOperationException("回读不符，实际值：" + FastPropertyValue.Value(actual).Display);
+                if (!PnPropertyValuePolicy.Equivalent(prepared.Plan, actual)) throw new InvalidOperationException("回读不符，实际值：" + FastPropertyValue.Value(actual).Display);
                 if (prepared.Plan.Registration is { } registration
                     && context.Links.FindRowByTag(registration.Registry, registration.Candidate) != context.RowId)
                     throw new InvalidOperationException("实际 Tag 已回读，但无法确认位号登记归属。");
-                return actual!; // 已与非 null 的请求值完整核对相等。
+                return actual!; // 已按列类型或严格文本核对，保留非 null 的 SDK 实际值。
             }
             catch (System.Exception ex)
             {

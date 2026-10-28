@@ -25,6 +25,13 @@ internal sealed class FastPropertyAccess
     }
     internal bool IsCurrent => _plant.IsCurrent;
 
+    /// <summary>写入事件无法可靠定位时返回空，调用方必须回退全量复核。</summary>
+    internal string? RelatedDataKey(ObjectId id)
+    {
+        try { return IsCurrent && !id.IsNull && id.IsValid && !id.IsErased ? FastPlantPropertiesAccess.RelatedDataKey(id) : null; }
+        catch (System.Exception) { return null; }
+    }
+
     /// <summary>调用方在主线程读锁内检索当前对象自身属性；不求值位号或探测写入。</summary>
     internal IReadOnlyList<PnPropertyCatalogEntry> Catalog(ObjectId id)
     {
