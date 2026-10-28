@@ -74,6 +74,21 @@ public sealed class XrefCatalogTests : IDisposable
         Assert.Contains(child.Filename, File.ReadAllText(_journal.LogPath));
     }
 
+    /// <summary>共享祖先集合按出栈释放，菱形关系保留全部引用链且只加载一个来源。</summary>
+    [Fact]
+    public void SharedBranchesRetainAllPathsWithScopedAncestors()
+    {
+        var main=Source("A.dwg");var left=Source("left.dwg");var right=Source("right.dwg");var leaf=Source("leaf.dwg");
+        leaf.Block("Valve");
+        main.Reference("Left",left,left.Filename);main.Reference("Right",right,right.Filename);
+        left.Reference("Leaf1",null,leaf.Filename);left.Reference("Leaf2",null,leaf.Filename);
+        right.Reference("Leaf1",null,leaf.Filename);right.Reference("Leaf2",null,leaf.Filename);
+        using var catalog=new XrefBlockCadCatalog(main,main.Filename,()=>{},_journal);
+        catalog.Discover();var entry=Assert.Single(catalog.ReadNames().Entries);
+        Assert.Equal(4,entry.Source.Chains.Count);Assert.Equal(1,Database.Reads[leaf.Filename]);
+        Assert.True(catalog.ScopeComplete);
+    }
+
     /// <summary>已加载外参使用宿主当前数据库，不重新读取磁盘文件。</summary>
     [Fact]
     public void LoadedSourceUsesHostData()

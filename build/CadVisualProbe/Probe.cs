@@ -219,6 +219,8 @@ public static class Probe
                 }
                 finally{Marshal.FreeHGlobal(memory);}
             }
+            bool buffers=(int)Property(session!,"NormalizationBuffers")! == 1;
+            success&=buffers;results.Add(new{Name="规范化位图整批复用",Passed=buffers});
         }
         catch(System.Exception ex) { success=false;log.WriteLine("停止："+ex); }
         finally

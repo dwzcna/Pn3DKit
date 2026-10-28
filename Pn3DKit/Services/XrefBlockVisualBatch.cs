@@ -10,33 +10,36 @@ public static class XrefBlockVisualBatch
     public static void Run(IReadOnlyList<XrefBlockCandidate> candidates,
         Func<XrefBlockCandidate, IEnumerable<XrefVisualCapture>> capture, Func<bool> scopeComplete, Action ensure,
         Action<XrefBlockReportResult> append, List<XrefBlockReportResult> completed,
-        Action<int, int, string>? progress = null, Action<VisualDifference>? difference = null)
+        Action<int, int, string>? progress = null, Action<VisualDifference>? difference = null, VisualBatchMetrics? metrics = null)
     {
         for (int i = 0; i < candidates.Count; i++)
         {
             ensure(); var candidate = candidates[i]; progress?.Invoke(i + 1, candidates.Count, candidate.Name);
-            var result = Group(candidate, capture(candidate), scopeComplete, ensure, difference);
+            var result = Group(candidate, capture(candidate), scopeComplete, ensure, difference, metrics);
             ensure(); append(result); completed.Add(result);
         }
     }
 
     /// <summary>未知来源不进入内容组；两组可靠结果不同优先报告不匹配，即使另有未知来源。</summary>
     public static XrefBlockReportResult Group(XrefBlockCandidate candidate, IEnumerable<XrefVisualCapture> captures,
-        Func<bool> scopeComplete, Action ensure, Action<VisualDifference>? difference = null)
+        Func<bool> scopeComplete, Action ensure, Action<VisualDifference>? difference = null,
+        VisualBatchMetrics? metrics = null, Func<VisualSample, string>? fingerprint = null)
     {
         IEnumerator<XrefVisualCapture>? iterator = null;
         return XrefVisualCleanup.Run(() =>
         {
             iterator = captures.GetEnumerator();
-            return GroupCore(candidate, iterator, scopeComplete, ensure, difference);
+            return GroupCore(candidate, iterator, scopeComplete, ensure, difference, metrics ?? new(), fingerprint ?? CompressedVisualSample.FingerprintOf);
         }, () => iterator?.Dispose(), "消费绘制结果及释放候选资源时失败。");
     }
 
     /// <summary>不自行关闭迭代器，交由调用方合并消费异常和释放异常。</summary>
     private static XrefBlockReportResult GroupCore(XrefBlockCandidate candidate, IEnumerator<XrefVisualCapture> captures,
-        Func<bool> scopeComplete, Action ensure, Action<VisualDifference>? difference)
+        Func<bool> scopeComplete, Action ensure, Action<VisualDifference>? difference, VisualBatchMetrics metrics, Func<VisualSample, string> fingerprint)
     {
         var groups = new List<(CompressedVisualSample Sample, List<XrefBlockNameEntry> Entries)>();
+        var buckets = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        VisualSample? firstPixels = null;
         var problems = new List<string>(); var differences = new List<string>();
         var received = new HashSet<int>();
         while (captures.MoveNext())
@@ -54,20 +57,20 @@ public static class XrefBlockVisualBatch
                 problems.Add("dwgNo=" + entry.Source.DwgNo + " " + entry.Source.Drawing + "：" + (capture.Problem ?? valid.Reason));
                 continue;
             }
-            var compressed = new CompressedVisualSample(sample);
+            string digest = fingerprint(sample); metrics.Fingerprints++;
             int match = -1;
-            for (int index = 0; index < groups.Count; index++)
-            {
-                ensure();
-                if (groups[index].Sample.Fingerprint != compressed.Fingerprint) continue;
-                var comparison = BlockVisualComparison.Compare(groups[index].Sample.Read(), sample);
-                if (comparison.State == VisualState.Matched) { match = index; break; }
-            }
+            if (buckets.TryGetValue(digest, out var bucket))
+                foreach (int index in bucket)
+                {
+                    ensure(); metrics.PixelComparisons++;
+                    if (groups[index].Sample.Matches(sample)) { match = index; break; }
+                }
             if (match >= 0) { groups[match].Entries.Add(entry); continue; }
             if (groups.Count > 0)
             {
                 var first = groups[0];
-                var original = first.Sample.Read();
+                if (firstPixels == null) { firstPixels = first.Sample.Read(); metrics.ExpandedRepresentatives++; }
+                var original = firstPixels;
                 var comparison = BlockVisualComparison.Compare(original, sample);
                 if (comparison.State != VisualState.Mismatched)
                 {
@@ -79,6 +82,9 @@ public static class XrefBlockVisualBatch
                 differences.Add(detail);
                 ensure(); difference?.Invoke(new(candidate.Name, groups.Count + 1, original, sample, first.Entries[0], entry, detail));
             }
+            var compressed = new CompressedVisualSample(sample, digest); metrics.Representatives++;
+            if (!buckets.TryGetValue(digest, out var indices)) buckets[digest] = indices = [];
+            indices.Add(groups.Count);
             groups.Add((compressed, [entry]));
         }
         foreach (var entry in candidate.Entries.Where(e => !received.Contains(e.Source.DwgNo)))

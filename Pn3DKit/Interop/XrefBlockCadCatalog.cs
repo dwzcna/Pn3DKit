@@ -323,7 +323,7 @@ internal sealed class XrefBlockCadCatalog : IDisposable
                             catch (System.Exception ex) { _diskFailures[path] = Detail(ex); throw; }
                         }
                     }
-                    Visit(child, next, depth + 1, new HashSet<ObjectId>(ancestors));
+                    Visit(child, next, depth + 1, ancestors);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (XrefBlockLogException) { throw; }

@@ -81,9 +81,13 @@ public sealed class XrefBlockCheckCommands
             if (candidates.Count > 0)
             {
                 visual = new(document, catalog, Ensure, progress.Stage);
+                var metrics = new VisualBatchMetrics();
                 XrefBlockVisualBatch.Run(candidates, visual.Capture, () => catalog.ScopeComplete, Ensure,
                     result => progress.Complete(result, journal.AppendComparison), comparisons, progress.Compare,
-                    journal.AppendVisualDifference);
+                    journal.AppendVisualDifference, metrics);
+                journal.Notice("视觉工作量：摘要 " + metrics.Fingerprints + "；新组压缩 " + metrics.Representatives
+                    + "；完整像素命中核对 " + metrics.PixelComparisons + "；代表展开 " + metrics.ExpandedRepresentatives
+                    + "；规范化位图分配 " + visual.NormalizationBuffers);
             }
             progress.Stage("正在核对比较来源状态。");
             catalog.VerifySources();

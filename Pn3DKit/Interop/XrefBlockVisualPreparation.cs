@@ -367,19 +367,10 @@ internal sealed class XrefBlockVisualPreparation : IDisposable
             LeafBox(root, Matrix3d.Identity);
             // 扩展可能的像素覆盖范围，包含交叉细线的排序影响；范围不是一致性证据。
             double margin = Bounds is {} box ? Math.Max(box.MaxX-box.MinX, box.MaxY-box.MinY)/1024 : 0;
-            var ordered = bounds.OrderBy(b => b.Box.MinPoint.X).ToArray();
-            for (int i = 0; i < ordered.Length; i++)
-            {
-                _ensure();
-                for (int j = i+1; j < ordered.Length; j++)
-                {
-                    if (ordered[j].Box.MinPoint.X > ordered[i].Box.MaxPoint.X + margin) break;
-                    if (ordered[i].Color == ordered[j].Color && ordered[i].Weight == ordered[j].Weight) continue;
-                    if (ordered[j].Box.MinPoint.Y <= ordered[i].Box.MaxPoint.Y + margin
-                        && ordered[j].Box.MaxPoint.Y >= ordered[i].Box.MinPoint.Y - margin)
-                    { _issues.Add("重叠不同颜色或线宽内容的绘制顺序不能由当前离屏后端可靠验证。"); return; }
-                }
-            }
+            var boxes = bounds.Select(b => new VisualDisplayBox(b.Box.MinPoint.X,b.Box.MinPoint.Y,
+                b.Box.MaxPoint.X,b.Box.MaxPoint.Y,b.Color,b.Weight)).ToArray();
+            if (VisualOverlapIndex.HasOverlap(boxes, margin, _ensure))
+                _issues.Add("重叠不同颜色或线宽内容的绘制顺序不能由当前离屏后端可靠验证。");
         }
         catch (System.Exception ex) when (Recoverable(ex))
         { _issues.Add("无法确认遮挡范围：" + XrefBlockCadCatalog.Detail(ex)); }

@@ -32,12 +32,17 @@ internal sealed class XrefBlockVisualSession : IDisposable
     private View? _view;
     private VisualStyle? _style;
     private bool _disposed;
+    private Bitmap? _normalized;
+    private System.Drawing.Graphics? _normalizer;
+    private byte[]? _devicePixels, _repeatedPixels;
     /// <summary>专用设备实际创建数量；无候选或全部不支持时为零。</summary>
     internal int DevicesCreated { get; private set; }
     /// <summary>宿主未清除完成标志但视图、设备及重复读回完整一致的帧数。</summary>
     internal int LegacyInvalidFlags { get; private set; }
     /// <summary>实际原生光栅绘制调用次数，包含线宽位置通道。</summary>
     internal int RasterCalls { get; private set; }
+    /// <summary>整批规范化位图实际分配次数，固定分辨率时为一次。</summary>
+    internal int NormalizationBuffers { get; private set; }
 
     /// <summary>只记录宿主及检查回调，不在构造时创建任何图形设备或内容读取器。</summary>
     internal XrefBlockVisualSession(Document document, XrefBlockCadCatalog catalog, Action ensure, Action<string>? stage = null)
@@ -177,29 +182,27 @@ internal sealed class XrefBlockVisualSession : IDisposable
             _device.Invalidate(); _device.Update(); RasterCalls++;
             _view.Update();
             // 2026 原型的 IsValid 始终为 false，文字首次读回还存在延迟更新；有界核对三路完整像素。
-            byte[] Read(bool device)
+            int required = checked(frame.Pixels * frame.Pixels * 4);
+            PreparePixelBuffers(frame.Pixels, required);
+            var pixels = new byte[required];
+            void Read(bool device, byte[] destination)
             {
                 using var snapshot = device
                     ? _device.GetSnapshot(new Rectangle(0, 0, frame.Pixels, frame.Pixels))
                     : _view.GetSnapshot(new Rectangle(0, 0, frame.Pixels, frame.Pixels));
                 if (snapshot == null || snapshot.Width != frame.Pixels || snapshot.Height != frame.Pixels)
                     throw new XrefVisualFatalException("离屏读回为空或尺寸与公共视窗不符。");
-                using var normalized = new Bitmap(frame.Pixels, frame.Pixels, PixelFormat.Format32bppArgb);
-                using (var graphics = System.Drawing.Graphics.FromImage(normalized))
-                {
-                    graphics.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
-                    graphics.DrawImageUnscaled(snapshot, 0, 0);
-                }
-                return Pixels(normalized);
+                _normalizer!.DrawImageUnscaled(snapshot, 0, 0);
+                CopyPixels(_normalized!, destination);
             }
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 Check();
-                var pixels = Read(false);
-                var devicePixels = Read(true);
-                var repeated = Read(false);
-                if (BlockVisualComparison.CompleteReadback(frame, pixels, devicePixels)
-                    && BlockVisualComparison.CompleteReadback(frame, pixels, repeated))
+                Read(false, pixels);
+                Read(true, _devicePixels!);
+                Read(false, _repeatedPixels!);
+                if (pixels.AsSpan().SequenceEqual(_devicePixels.AsSpan(0, required))
+                    && pixels.AsSpan().SequenceEqual(_repeatedPixels.AsSpan(0, required)))
                 {
                     if (!_device.IsValid) LegacyInvalidFlags++;
                     Check();
@@ -225,18 +228,53 @@ internal sealed class XrefBlockVisualSession : IDisposable
     /// <summary>逐行复制有效像素，处理行填充和有符号 stride，不把原生指针交给后台。</summary>
     internal static byte[] Pixels(Bitmap bitmap)
     {
+        var pixels = new byte[checked(bitmap.Width * bitmap.Height * 4)];
+        CopyPixels(bitmap, pixels);
+        return pixels;
+    }
+
+    /// <summary>向已拥有的输出或临时缓冲复制；只处理有效像素，不暴露池化数组。</summary>
+    private static void CopyPixels(Bitmap bitmap, byte[] destination)
+    {
+        int rowBytes = checked(bitmap.Width * 4);
+        int required = checked(rowBytes * bitmap.Height);
+        if (destination.Length < required) throw new InvalidOperationException("读回缓冲过小。");
         var bounds = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
         var bits = bitmap.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
         {
-            int rowBytes = checked(bitmap.Width * 4);
             if (Math.Abs((long)bits.Stride) < rowBytes) throw new InvalidOperationException("原生图像行跨度无效。");
-            var pixels = new byte[checked(rowBytes * bitmap.Height)];
             for (int y = 0; y < bitmap.Height; y++)
-                Marshal.Copy(IntPtr.Add(bits.Scan0, checked(y * bits.Stride)), pixels, y * rowBytes, rowBytes);
-            return pixels;
+                Marshal.Copy(IntPtr.Add(bits.Scan0, checked(y * bits.Stride)), destination, y * rowBytes, rowBytes);
         }
         finally { bitmap.UnlockBits(bits); }
+    }
+
+    /// <summary>仅纯图像资源按分辨率复用；返回的样本数组始终单独拥有。</summary>
+    private void PreparePixelBuffers(int pixels, int required)
+    {
+        if (_normalized != null && _normalized.Width == pixels && _normalized.Height == pixels) return;
+        ReleasePixelBuffers();
+        _normalized = new Bitmap(pixels, pixels, PixelFormat.Format32bppArgb);
+        _normalizer = System.Drawing.Graphics.FromImage(_normalized);
+        _normalizer.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+        _devicePixels = System.Buffers.ArrayPool<byte>.Shared.Rent(required);
+        _repeatedPixels = System.Buffers.ArrayPool<byte>.Shared.Rent(required);
+        NormalizationBuffers++;
+    }
+
+    /// <summary>关闭图像资源并清除后归还所有池化缓冲，任何失败仍继续清理。</summary>
+    private void ReleasePixelBuffers()
+    {
+        var resources = new List<System.Exception>();
+        try { _normalizer?.Dispose(); } catch (System.Exception ex) { resources.Add(ex); }
+        try { _normalized?.Dispose(); } catch (System.Exception ex) { resources.Add(ex); }
+        try { if (_devicePixels != null) System.Buffers.ArrayPool<byte>.Shared.Return(_devicePixels, clearArray: true); }
+        catch (System.Exception ex) { resources.Add(ex); }
+        try { if (_repeatedPixels != null) System.Buffers.ArrayPool<byte>.Shared.Return(_repeatedPixels, clearArray: true); }
+        catch (System.Exception ex) { resources.Add(ex); }
+        _normalizer = null; _normalized = null; _devicePixels = null; _repeatedPixels = null;
+        if (resources.Count != 0) throw new XrefVisualFatalException("释放图像缓冲失败。", new AggregateException(resources));
     }
 
     /// <summary>双背景联合判断空图；不能把缺失内容的纯背景作为相同证据。</summary>
@@ -262,7 +300,7 @@ internal sealed class XrefBlockVisualSession : IDisposable
         var errors = new List<System.Exception>();
         void Close(Action action) { try { action(); } catch (System.Exception ex) { errors.Add(ex); } }
         Close(() => _view?.EraseAll()); Close(() => _device?.EraseAll());
-        Close(() => _view?.Dispose()); Close(() => _style?.Dispose()); Close(() => _device?.Dispose());
+        Close(() => _view?.Dispose()); Close(() => _style?.Dispose()); Close(() => _device?.Dispose()); Close(ReleasePixelBuffers);
         if (_kernel != null) Close(() => Manager.ReleaseGraphicsKernel(_kernel));
         if (errors.Count > 0) throw new XrefVisualFatalException("释放专用离屏设备失败。", new AggregateException(errors));
     }
