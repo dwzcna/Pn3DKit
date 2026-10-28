@@ -59,7 +59,7 @@ public static class PnPropertyPolicy
         string type = objects.All(x => x.TypeKey == objects[0].TypeKey) ? objects[0].TypeLabel : "多种对象";
         string header = type + (objects.Count == 1 ? "" : $"（{objects.Count} 个对象）");
         return new(header, objects.Count, cells, $"已选 {objects.Count} 个对象 · "
-            + (cells.Any(x => x.Permission.Allowed) ? "可编辑项回车或失焦提交" : "只读")
+            + (cells.Any(x => x.Permission.Allowed) ? "仅回车提交 · 失焦保留草稿 · Esc 撤销" : "只读")
             + (cells.Any(x => x.Value.Kind == FastValueKind.Error) ? " · 部分属性读取失败" : ""));
     }
 

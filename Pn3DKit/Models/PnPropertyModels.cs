@@ -6,7 +6,7 @@ public sealed record PnPropertySpec(Guid Id, long Revision, string Input);
 public sealed record PnEditPermission(bool Allowed, string Reason)
 {
     public static PnEditPermission ReadOnly(string reason) => new(false, reason);
-    public static PnEditPermission Writable => new(true, "可编辑；回车或离开单元格提交，不自动保存。");
+    public static PnEditPermission Writable => new(true, "可编辑；仅回车提交，失焦保留草稿，Esc 撤销，不自动保存。");
 }
 /// <summary>SDK 和文档状态的只读事实，任何未确认元数据都不允许写入。</summary>
 public sealed record PnPermissionFacts(bool MetadataKnown = false, bool FieldReadOnly = false,
@@ -22,10 +22,10 @@ public sealed record PnObjectProperties(string TypeKey, string TypeLabel, IReadO
 /// <summary>完整选择读取结束后发布，未完成轮次不显示部分共同值。</summary>
 public sealed record PnPanelSnapshot(string Header, int Count, IReadOnlyList<PnPropertyCell> Cells, string Status);
 /// <summary>用户显式提交的单元格修改；Original 仅用于单选兼容核对，多选原值来自宿主逐对象票据。</summary>
-public sealed record PnEditRequest(Guid Token, Guid RowId, long RowRevision, string Path, string Original, string Value);
+public sealed record PnEditRequest(Guid Token, Guid RowId, long RowRevision, string Path, string? Original, string Value);
 /// <summary>写前核对快照；宿主身份必须传入完整 ObjectId，禁止按文件名比较。</summary>
 public sealed record PnEditContext<TIdentity, TTarget>(TIdentity Identity, TTarget Target, long Epoch,
-    Guid RowId, long RowRevision, string Path, string TargetKey, string Original,
+    Guid RowId, long RowRevision, string Path, string TargetKey, string? Original,
     int SelectionCount, PnEditPermission Permission);
 
 /// <summary>来自 SDK 的列事实，不包含显示名称等描述信息；普通字段不依赖位号格式。</summary>

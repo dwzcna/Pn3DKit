@@ -95,6 +95,7 @@ public static class PnPropertyEditBatch
                         try { actual = host.ReadActual(results[i].Target); }
                         catch (Exception read) { actual = FastPropertyValue.Error(read.Message); }
                         results[i] = results[i] with { Actual = actual.Kind == FastValueKind.Value ? actual.Raw : null,
+                            ActualIsNull = actual.Kind == FastValueKind.Value && actual.Raw == null,
                             State = PnPropertyWriteState.Failed,
                             Detail = ex.Message + (actual.Kind == FastValueKind.Error ? "；回读：" + actual.Detail : "") };
                     }
@@ -118,6 +119,7 @@ public static class PnPropertyEditBatch
                     if (actual.Kind != FastValueKind.Value || actual.Raw != value)
                         results[i] = results[i] with { State = PnPropertyWriteState.Failed,
                             Actual = actual.Kind == FastValueKind.Value ? actual.Raw : null,
+                            ActualIsNull = actual.Kind == FastValueKind.Value && actual.Raw == null,
                             Detail = "此前已处理，但最终状态不符或无法确认：" + ex.Message + "；" + actual.Detail };
                 }
             }

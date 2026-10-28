@@ -5,20 +5,28 @@ public enum FastProperty { Type, Layer, Color, Linetype, ProjectPart, Class, Tag
 /// <summary>空值、未就绪、确认缺少属性、失败与多种值分别表达，不用占位文本参与比较。</summary>
 public enum FastValueKind { Value, Missing, Error, Mixed, AbsentProperty }
 
-/// <summary>Raw 为比较键，Text 为显示名称；错误与不适用原因保留在 Tooltip。</summary>
-public sealed record FastPropertyValue(FastValueKind Kind, string Raw = "", string? Text = null, string? Detail = null)
+/// <summary>Raw 保留真实 null、空字符串和空白字符作为比较键；Text 为独立显示名称。</summary>
+public sealed record FastPropertyValue(FastValueKind Kind, string? Raw = "", string? Text = null, string? Detail = null)
 {
-    /// <summary>将结构化状态转换为用户可读文本，不将异常伪装为空属性。</summary>
-    public string Display => Kind switch
+    /// <summary>仅结构化的混合、空白和 null 值具有占位提示；真实同文字符串不是占位。</summary>
+    public string? Placeholder => Kind switch
     {
-        FastValueKind.Value => Text ?? Raw,
+        FastValueKind.Mixed => "*(多种)",
+        FastValueKind.Value when Raw == null => "(null)",
+        FastValueKind.Value when Raw == "" && string.IsNullOrEmpty(Text) => "(空白)",
+        _ => null
+    };
+
+    /// <summary>将结构化状态转换为用户可读文本，不将异常伪装为空属性。</summary>
+    public string Display => Placeholder ?? (Kind switch
+    {
+        FastValueKind.Value => Text ?? Raw ?? "",
         FastValueKind.AbsentProperty => "--",
-        FastValueKind.Mixed => "多种值",
         FastValueKind.Error => "读取失败",
         _ => ""
-    };
+    });
     /// <summary>创建普通值，也可用独立显示文本表示类别本地化名称。</summary>
-    public static FastPropertyValue Value(string raw, string? text = null) => new(FastValueKind.Value, raw, text);
+    public static FastPropertyValue Value(string? raw, string? text = null) => new(FastValueKind.Value, raw, text);
     /// <summary>表示属性未配置、不适用或当前环境不可用。</summary>
     public static FastPropertyValue Missing(string? detail = null) => new(FastValueKind.Missing, Detail: detail);
     /// <summary>仅在已定位的 Plant 对象确认不含此属性时使用；不表示空值、无选择或环境不可用。</summary>

@@ -18,17 +18,17 @@ public sealed class PnPropertyEditTests
     public void ValveAndFlowMeterAllowTheirCommonWritableInstalledProperty()
     {
         var result = PnPropertyPolicy.Merge([Spec], [Object("手动阀", "一层"), Object("流量计", "二层")]);
-        Assert.Equal("多种值", result.Cells[0].Value.Display);
+        Assert.Equal("*(多种)", result.Cells[0].Value.Display);
         Assert.True(result.Cells[0].Permission.Allowed); Assert.Equal(2, result.Count);
         Assert.Equal("多种对象（2 个对象）", result.Header);
     }
 
     /// <summary>共同空值可编辑，仍由原始空值比较，不把显示标记当值。</summary>
     [Fact]
-    public void AllEmptyPropertiesRemainWritableAndBlank()
+    public void AllEmptyPropertiesRemainWritableWithPlaceholder()
     {
         var result = PnPropertyPolicy.Merge([Spec], [Object("手动阀", ""), Object("流量计", "")]);
-        Assert.True(result.Cells[0].Permission.Allowed); Assert.Equal("", result.Cells[0].Value.Display);
+        Assert.True(result.Cells[0].Permission.Allowed); Assert.Equal("(空白)", result.Cells[0].Value.Display);
     }
 
     /// <summary>任一对象的获取、锁层、只读、缺少或读取错误，均使整行只读并保留目标原因。</summary>
@@ -206,10 +206,51 @@ public sealed class PnPropertyEditTests
         Assert.Contains("最终复核", result.Message);
     }
 
+    /// <summary>null 与空字符串是不同原值，统一清空时只写真实 null 目标。</summary>
+    [Fact]
+    public void NullOriginalIsWrittenButExistingEmptyStringIsUnchanged()
+    {
+        var host = new Host(2); host.Values[1] = null; host.Values[2] = "";
+        var result = PnPropertyEditBatch.Run(host.Snapshot(), "", host);
+        Assert.True(result.PreflightPassed); Assert.Equal(new[] { 1 }, host.Writes);
+        Assert.Equal(PnPropertyWriteState.Updated, result.Items[0].State);
+        Assert.Null(result.Items[0].Original); Assert.Equal("", result.Items[0].Actual);
+        Assert.Equal(PnPropertyWriteState.Unchanged, result.Items[1].State);
+    }
+
+    /// <summary>读取后 null 变为空字符串仍属于原值变化，必须在首笔写入前整体拒绝。</summary>
+    [Fact]
+    public void NullToEmptyChangeRejectsStaleSelectionBeforeWriting()
+    {
+        var host = new Host(2); host.Values[1] = null; var snapshot = host.Snapshot(); host.Values[1] = "";
+        var result = PnPropertyEditBatch.Run(snapshot, "新值", host);
+        Assert.False(result.PreflightPassed); Assert.Empty(host.Writes); Assert.Contains("原值", result.Message);
+    }
+
+    /// <summary>失败后仍能回读真实 null 时明确显示 null，不误称无法回读或写入提示文字。</summary>
+    [Fact]
+    public void FailedWriteReportsActualNullSeparatelyFromUnreadable()
+    {
+        var host = new Host(3) { WriteFailure = 2 }; host.Values[2] = null;
+        var result = PnPropertyEditBatch.Run(host.Snapshot(), "新值", host);
+        Assert.True(result.Items[1].ActualIsNull); Assert.Null(result.Items[1].Actual);
+        Assert.Contains("实际：(null)", result.Details); Assert.Equal(PnPropertyWriteState.NotExecuted, result.Items[2].State);
+    }
+
+    /// <summary>最终复核发现已写目标变为 null，保留实际空状态及失败原因。</summary>
+    [Fact]
+    public void FinalRecheckRetainsNullActualValue()
+    {
+        var host = new Host(2); host.AfterWrite = id => { if (id == 2) host.Values[1] = null; };
+        var result = PnPropertyEditBatch.Run(host.Snapshot(), "新值", host);
+        Assert.Equal(PnPropertyWriteState.Failed, result.Items[0].State);
+        Assert.True(result.Items[0].ActualIsNull); Assert.Contains("实际：(null)", result.Details);
+    }
+
     private sealed class Host : IPnPropertyEditHost<int, int>
     {
         internal List<PnEditContext<int, int>> Current { get; } = [];
-        internal Dictionary<int, string> Values { get; } = [];
+        internal Dictionary<int, string?> Values { get; } = [];
         internal List<int> Writes { get; } = [];
         internal bool ReverseCapture, RegisterTags, SeparateRegistries, ProjectConflict, FailAfterChange;
         internal int PrepareFailure, WriteFailure, MismatchedWrite, PreparedBeforeFirstWrite;

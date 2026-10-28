@@ -40,7 +40,7 @@ public sealed class FastPropertiesViewTests
         Click(view, "删除属性"); Assert.Single(view.ReadSpecs());
     });
 
-    private static (FastPropertiesView View, TextBox Path, TextBox Value) Comment(string original = "原备注")
+    private static (FastPropertiesView View, TextBox Path, TextBox Value) Comment(string? original = "原备注")
     {
         var view = new FastPropertiesView();
         var boxes = Children<TextBox>(view).ToArray();
@@ -50,7 +50,7 @@ public sealed class FastPropertiesViewTests
     }
 
     /// <summary>通过生产元数据策略取得许可，不直接在烟测中硬编码 Writable。</summary>
-    private static PnPanelSnapshot Snapshot(FastPropertiesView view, string original)
+    private static PnPanelSnapshot Snapshot(FastPropertiesView view, string? original)
     {
         var specs = view.ReadSpecs();
         var permission = PnPropertyMetadataPolicy.Evaluate(new("Comment"), ["DisplayName", "UIOrder"], _ => "描述",
@@ -61,7 +61,7 @@ public sealed class FastPropertiesViewTests
                 : new PnPropertyCell(s, FastPropertyValue.Value(original), permission)).ToArray())]);
         return snapshot with { Cells = snapshot.Cells.Select(c => c with { EditToken = Guid.NewGuid() }).ToArray() };
     }
-    private static void ShowComment(FastPropertiesView view, string original) => view.Show(Snapshot(view, original));
+    private static void ShowComment(FastPropertiesView view, string? original) => view.Show(Snapshot(view, original));
 
     /// <summary>Comment 取得 SDK 元数据许可后，值框可输入；焦点切换会申请和释放原生保留。</summary>
     [Fact]
@@ -131,20 +131,22 @@ public sealed class FastPropertiesViewTests
         Assert.True(view.HasInputFocus); Assert.Equal("原备注", value.Text); Assert.False(value.IsReadOnly);
     });
 
-    /// <summary>空 Comment 可编辑，初始及失焦后仍空白，Esc 与未变回车不提交显示标记。</summary>
+    /// <summary>空 Comment 使用占位提示，编辑缓冲仍为空，Esc 与未变回车不提交标记。</summary>
     [Fact]
     public void EmptyCommentEscapeAndUnchangedEnterDoNotSubmitPlaceholder() => Sta(() =>
     {
         var (view, _, value) = Comment("");
         int submissions = 0; view.EditRequested += _ => submissions++;
-        Assert.Equal("", value.Text);
+        Assert.Equal("(空白)", value.Text);
         Focus(value, true); Assert.Equal("", value.Text);
         value.Text = "撤销的输入"; Key(value, System.Windows.Input.Key.Escape);
         Assert.Equal("", value.Text);
         Key(value, System.Windows.Input.Key.Enter); Key(value, System.Windows.Input.Key.Enter);
         Focus(value, false); Assert.Equal(0, submissions);
-        Assert.Equal("", value.Text);
+        Assert.Equal("(空白)", value.Text);
         Focus(value, true); value.Text = "首条备注"; Focus(value, false);
+        Assert.Equal(0, submissions); Assert.Equal("首条备注", value.Text);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
         Assert.Equal(1, submissions);
     });
 
@@ -163,7 +165,7 @@ public sealed class FastPropertiesViewTests
             _ => new PnPropertyCell(spec, FastPropertyValue.Missing(), PnEditPermission.ReadOnly("请输入属性。"))
         }).ToArray(), "已选 1 个对象"));
         var boxes = Children<TextBox>(view).ToArray();
-        Assert.Equal("", boxes[1].Text); Assert.False(boxes[1].IsReadOnly);
+        Assert.Equal("(空白)", boxes[1].Text); Assert.False(boxes[1].IsReadOnly);
         Assert.Equal("--", boxes[3].Text); Assert.True(boxes[3].IsReadOnly);
         Assert.Equal("", boxes[5].Text);
         var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
@@ -173,13 +175,16 @@ public sealed class FastPropertiesViewTests
         Assert.Single(edits);
     });
 
-    /// <summary>失焦提交保留路径、原值和修订，不能再次复用旧票据。</summary>
+    /// <summary>失焦保留草稿和有效票据，回到值格后只能通过 Enter 提交一次。</summary>
     [Fact]
-    public void LostFocusSubmitsCommentOnce() => Sta(() =>
+    public void LostFocusKeepsDraftUntilEnter() => Sta(() =>
     {
         var (view, _, value) = Comment();
         var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
         Focus(value, true); value.Text = "失焦备注"; Focus(value, false); Focus(value, false);
+        Assert.Empty(edits); Assert.Equal("失焦备注", value.Text); Assert.False(view.HasInputFocus);
+        Focus(value, true); Assert.Equal("失焦备注", value.Text);
+        Key(value, System.Windows.Input.Key.Enter); Key(value, System.Windows.Input.Key.Enter); Focus(value, false);
         Assert.Single(edits); Assert.Equal("失焦备注", edits[0].Value);
     });
 
@@ -367,7 +372,7 @@ public sealed class FastPropertiesViewTests
             { RoutedEvent = Mouse.PreviewMouseDownEvent });
         Focus(value, false);
         Assert.Equal(0, writes); Assert.Equal(0, changed); Assert.False(value.IsReadOnly);
-        Assert.Equal("原备注", value.Text); Assert.Equal(2, view.ReadSpecs().Count);
+        Assert.Equal("撤销的删除草稿", value.Text); Assert.Equal(2, view.ReadSpecs().Count);
     });
 
     /// <summary>Ctrl+D 绑定当前值格与菜单同一命令，移除未提交草稿不写对象，也不留下旧行。</summary>
@@ -409,7 +414,7 @@ public sealed class FastPropertiesViewTests
         Assert.Single(view.ReadSpecs()); Assert.Equal("", view.ReadSpecs()[0].Input);
     });
 
-    /// <summary>右键按下但未弹菜单不遗留状态，失焦提交一次并释放焦点保留。</summary>
+    /// <summary>右键按下但未弹菜单仍释放焦点、保留草稿，回到原格可正常回车提交。</summary>
     [Fact]
     public void RightPressWithoutOpeningMenuDoesNotBlockCommitOrFocusRelease() => Sta(() =>
     {
@@ -419,8 +424,10 @@ public sealed class FastPropertiesViewTests
             { RoutedEvent = Mouse.PreviewMouseDownEvent });
         Assert.False(value.ContextMenu.IsOpen);
         Focus(value, false); Assert.False(view.HasInputFocus);
-        Assert.Single(edits); Assert.Equal("右键前草稿", edits[0].Value);
+        Assert.Empty(edits); Assert.Equal("右键前草稿", value.Text);
+        Focus(value, true);
         Key(value, System.Windows.Input.Key.Enter); Assert.Single(edits);
+        Assert.Equal("右键前草稿", edits[0].Value);
     });
 
     /// <summary>ContextMenuOpening 被宿主取消时，Dispatcher 清理临时状态，不等不存在的 Closed。</summary>
@@ -436,7 +443,9 @@ public sealed class FastPropertiesViewTests
         value.RaiseEvent(opening); Assert.True(opening.Handled);
         Focus(value, false); Assert.Empty(edits);
         PumpMenuCleanup();
-        Assert.False(view.HasInputFocus); Assert.Single(edits); Assert.Equal("取消菜单草稿", edits[0].Value);
+        Assert.False(view.HasInputFocus); Assert.Empty(edits); Assert.Equal("取消菜单草稿", value.Text);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal("取消菜单草稿", edits[0].Value);
     });
 
     /// <summary>正常菜单关闭并返回原格，延迟收尾不重置草稿或提前提交。</summary>
@@ -451,16 +460,18 @@ public sealed class FastPropertiesViewTests
         Key(value, System.Windows.Input.Key.Enter); Assert.Single(edits);
     });
 
-    /// <summary>菜单结束后已离开值格，按原失焦语义提交一次。</summary>
+    /// <summary>菜单结束后离开值格不提交，Dispatcher 重复收尾也不丢失草稿。</summary>
     [Fact]
-    public void MenuCloseOutsideEditorCommitsDeferredValueExactlyOnce() => Sta(() =>
+    public void MenuCloseOutsideEditorKeepsDraftWithoutWriting() => Sta(() =>
     {
         var (view, _, value) = Comment(); var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
         Focus(value, true); value.Text = "离开菜单的草稿";
         value.ContextMenu.RaiseEvent(new RoutedEventArgs(ContextMenu.OpenedEvent)); Focus(value, false);
         value.ContextMenu.RaiseEvent(new RoutedEventArgs(ContextMenu.ClosedEvent)); PumpMenuCleanup();
-        Assert.Single(edits); Assert.False(view.HasInputFocus); Assert.Equal("离开菜单的草稿", edits[0].Value);
-        PumpMenuCleanup(); Assert.Single(edits);
+        Assert.Empty(edits); Assert.False(view.HasInputFocus); Assert.Equal("离开菜单的草稿", value.Text);
+        PumpMenuCleanup(); Assert.Empty(edits);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal("离开菜单的草稿", edits[0].Value);
     });
 
     /// <summary>路径格的取消菜单也恢复提交和自动尾空行，不把全表停在 PendingPath。</summary>
@@ -511,11 +522,11 @@ public sealed class FastPropertiesViewTests
     public void MixedValueFocusAndUnchangedEnterNeverWriteEmptyOrPlaceholder() => Sta(() =>
     {
         var (view, value) = MixedComment(); int writes = 0; view.EditRequested += _ => writes++;
-        Assert.False(value.IsReadOnly); Assert.Equal("多种值", value.Text);
+        Assert.False(value.IsReadOnly); Assert.Equal("*(多种)", value.Text);
         Focus(value, true); Assert.Equal("", value.Text);
-        Assert.Contains(Children<TextBlock>(view), x => x.Text == "多种值" && x.Visibility == Visibility.Visible);
+        Assert.Contains(Children<TextBlock>(view), x => x.Text == "*(多种)" && x.Visibility == Visibility.Visible);
         Key(value, System.Windows.Input.Key.Enter); Focus(value, false);
-        Assert.Equal(0, writes); Assert.Equal("多种值", value.Text);
+        Assert.Equal(0, writes); Assert.Equal("*(多种)", value.Text);
         Focus(value, true); value.Text = "撤销的多选输入"; Key(value, System.Windows.Input.Key.Escape);
         Key(value, System.Windows.Input.Key.Enter); Focus(value, false); Assert.Equal(0, writes);
     });
@@ -523,7 +534,7 @@ public sealed class FastPropertiesViewTests
     /// <summary>用户实际输入的文字是新值，即使恰好等于多种值提示也能作为真实文字提交。</summary>
     [Theory]
     [InlineData("统一安装位置")]
-    [InlineData("多种值")]
+    [InlineData("*(多种)")]
     public void MixedValueActualInputSubmitsOnce(string newValue) => Sta(() =>
     {
         var (view, value) = MixedComment(); var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
@@ -531,13 +542,285 @@ public sealed class FastPropertiesViewTests
         Assert.Single(edits); Assert.Equal(newValue, edits[0].Value);
     });
 
-    /// <summary>混合值的空缓冲收到明确删除键时代表清空，而不是未修改。</summary>
-    [Fact]
-    public void MixedValueExplicitDeleteSubmitsAnEmptyValue() => Sta(() =>
+    /// <summary>混合值明确删除可跨越失焦保留空草稿，只有回车才提交清空请求。</summary>
+    [Theory]
+    [InlineData(System.Windows.Input.Key.Delete)]
+    [InlineData(System.Windows.Input.Key.Back)]
+    public void MixedValueExplicitDeleteSubmitsAnEmptyValue(System.Windows.Input.Key key) => Sta(() =>
     {
         var (view, value) = MixedComment(); var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
-        Focus(value, true); Key(value, System.Windows.Input.Key.Delete); Key(value, System.Windows.Input.Key.Enter);
+        Focus(value, true); Key(value, key); Focus(value, false);
+        Assert.Empty(edits); Assert.Equal("", value.Text); Assert.Equal(1, value.Foreground.Opacity);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
         Assert.Single(edits); Assert.Equal("", edits[0].Value);
+    });
+
+    /// <summary>混合提示只改变前景透明度，主题、只读、复制及光标选区都保持独立。</summary>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void MixedPlaceholderUsesHalfOpaqueTextOnly(bool dark, bool readOnly) => Sta(() =>
+    {
+        var (view, value) = MixedComment();
+        if (readOnly)
+        {
+            var specs = view.ReadSpecs();
+            view.Show(new("多选", 2, specs.Select(s => new PnPropertyCell(s,
+                new(FastValueKind.Mixed), PnEditPermission.ReadOnly("图层锁定"))).ToArray(), "只读"));
+        }
+        foreach (bool theme in new[] { dark, !dark, dark })
+        {
+            view.SetTheme(theme);
+            Assert.Equal("*(多种)", value.Text); Assert.Equal(0.5, value.Foreground.Opacity);
+            Assert.Equal(1, value.Opacity); Assert.Equal(1, value.Background.Opacity);
+            Assert.Equal(1, value.CaretBrush.Opacity); Assert.Equal(1, value.SelectionBrush.Opacity);
+            string key = readOnly ? "PanelReadOnlyForeground" : "PanelForeground";
+            Assert.Equal(((SolidColorBrush)view.Resources[key]).Color, ((SolidColorBrush)value.Foreground).Color);
+        }
+        value.SelectAll(); Assert.Equal("*(多种)", value.SelectedText);
+        Assert.True(value.IsEnabled); Assert.NotNull(value.ToolTip);
+        Focus(value, true);
+        if (!readOnly)
+        {
+            Assert.Equal("", value.Text);
+            var hint = Children<TextBlock>(view).Single(x => x.Text == "*(多种)" && x.Visibility == Visibility.Visible);
+            Assert.Equal(0.5, hint.Opacity); Assert.Equal(1, hint.Foreground.Opacity);
+        }
+        Focus(value, false); Assert.Equal("*(多种)", value.Text);
+    });
+
+    /// <summary>真实输入即使和提示同文也保持全不透明，失焦及主题变化不会改回占位文字。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LiteralMixedTextDraftStaysOpaqueAndCanBeSubmitted(bool dark) => Sta(() =>
+    {
+        var (view, value) = MixedComment(); var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
+        Focus(value, true); value.Text = "*(多种)"; Focus(value, false); view.SetTheme(dark);
+        Assert.Equal(1, value.Foreground.Opacity); Assert.Equal("*(多种)", value.Text); Assert.Empty(edits);
+        Assert.DoesNotContain(Children<TextBlock>(view), x => x.Text == "*(多种)" && x.Visibility == Visibility.Visible);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal("*(多种)", edits[0].Value);
+    });
+
+    /// <summary>Esc 恢复结构化原值；空值用半透明提示，普通及真实同文值用正常前景。</summary>
+    [Theory]
+    [InlineData("原备注")]
+    [InlineData("")]
+    [InlineData("*(多种)")]
+    public void EscapeDiscardsBlurredDraftAndRestoresOpaqueOriginal(string original) => Sta(() =>
+    {
+        var (view, _, value) = Comment(original); int writes = 0; view.EditRequested += _ => writes++;
+        Assert.Equal(original.Length == 0 ? 0.5 : 1, value.Foreground.Opacity);
+        Focus(value, true); value.Text = "等待提交"; Focus(value, false);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Escape);
+        Assert.True(view.HasInputFocus); Assert.Equal(original, value.Text);
+        Assert.Equal(original.Length == 0 ? 0.5 : 1, value.Foreground.Opacity);
+        Key(value, System.Windows.Input.Key.Enter); Focus(value, false);
+        Assert.Equal(0, writes); Assert.Equal(original.Length == 0 ? "(空白)" : original, value.Text);
+    });
+
+    /// <summary>同一票据的显示刷新保留草稿、光标选区及提交身份，不能以重复快照覆盖输入。</summary>
+    [Fact]
+    public void SameTicketRepaintKeepsDraftAndSelection() => Sta(() =>
+    {
+        var (view, _, value) = Comment(); var snapshot = Snapshot(view, "原备注"); view.Show(snapshot);
+        var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
+        Focus(value, true); value.Text = "保留的草稿"; value.Select(1, 2);
+        view.Show(snapshot with { Status = "显示刷新" });
+        Assert.Equal("保留的草稿", value.Text); Assert.Equal(1, value.SelectionStart); Assert.Equal(2, value.SelectionLength);
+        Focus(value, false); view.Show(snapshot); Assert.Equal("保留的草稿", value.Text);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal(snapshot.Cells[0].EditToken, edits[0].Token);
+    });
+
+    /// <summary>票据、原值、权限或有效性变化都废弃草稿，不能在后续 Enter 里写入旧输入。</summary>
+    [Theory]
+    [InlineData("ticket")]
+    [InlineData("original")]
+    [InlineData("permission")]
+    [InlineData("emptyToken")]
+    [InlineData("suspend")]
+    [InlineData("hide")]
+    public void InvalidatedDraftCannotLeakIntoAnotherContext(string change) => Sta(() =>
+    {
+        var (view, _, value) = Comment(); var snapshot = Snapshot(view, "原备注"); view.Show(snapshot);
+        int writes = 0; view.EditRequested += _ => writes++;
+        Focus(value, true); value.Text = "旧对象草稿"; Focus(value, false);
+        var cell = snapshot.Cells[0];
+        if (change == "suspend") view.SuspendEditing();
+        else if (change == "hide") view.ClearInputFocus();
+        else
+        {
+            cell = change switch
+            {
+                "ticket" => cell with { EditToken = Guid.NewGuid() },
+                "original" => cell with { Value = FastPropertyValue.Value("外部更新") },
+                "permission" => cell with { Permission = PnEditPermission.ReadOnly("权限已撤销") },
+                _ => cell with { EditToken = Guid.Empty }
+            };
+            view.Show(snapshot with { Cells = snapshot.Cells.Select((c, i) => i == 0 ? cell : c).ToArray() });
+        }
+        Assert.NotEqual("旧对象草稿", value.Text);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter); Assert.Equal(0, writes);
+        ShowComment(view, "新读取值"); Key(value, System.Windows.Input.Key.Enter); Assert.Equal(0, writes);
+    });
+
+    /// <summary>Tab 及 Shift+Tab 的焦点移动只保留草稿，进入其他行也不会间接写入。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TabFocusTraversalDoesNotSubmit(bool backwards) => Sta(() =>
+    {
+        var (view, path, value) = Comment(); int writes = 0; view.EditRequested += _ => writes++;
+        Focus(value, true); value.Text = "切换焦点草稿";
+        Key(value, System.Windows.Input.Key.Tab);
+        var target = backwards ? path : Children<TextBox>(view).Skip(2).First();
+        value.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, value, target)
+            { RoutedEvent = Keyboard.LostKeyboardFocusEvent });
+        Focus(target, true); PumpMenuCleanup();
+        Assert.Equal(0, writes); Assert.Equal("切换焦点草稿", value.Text);
+        Focus(target, false); Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Equal(1, writes);
+    });
+
+    /// <summary>多行草稿独立保存；某行提交刷新全局票据后，其他草稿必须废弃。</summary>
+    [Fact]
+    public void SubmittingOneRowDiscardsOtherDraftsWithGlobalTicketInvalidation() => Sta(() =>
+    {
+        var view = new FastPropertiesView(); view.AppendCatalogProperties(["Comment", "Area"]);
+        var snapshot = new PnPanelSnapshot("阀门", 1, view.ReadSpecs().Select(s => new PnPropertyCell(s,
+            FastPropertyValue.Value(s.Input + "原值"), PnEditPermission.Writable, Guid.NewGuid())).ToArray(), "可编辑");
+        view.Show(snapshot); var boxes = Children<TextBox>(view).ToArray();
+        var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
+        Focus(boxes[1], true); boxes[1].Text = "首行草稿"; Focus(boxes[1], false);
+        Focus(boxes[3], true); boxes[3].Text = "次行草稿";
+        Assert.Equal("首行草稿", boxes[1].Text); Key(boxes[3], System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal("次行草稿", edits[0].Value);
+        Assert.Equal("Comment原值", boxes[1].Text); Assert.True(boxes[1].IsReadOnly);
+        view.Show(snapshot with { Cells = snapshot.Cells.Select(c => c with { EditToken = Guid.NewGuid() }).ToArray() });
+        Focus(boxes[3], false); Focus(boxes[1], true); Key(boxes[1], System.Windows.Input.Key.Enter);
+        Assert.Single(edits);
+    });
+
+    /// <summary>暂停期间撤销草稿但仍灰显半透明混合提示；重复暂停不改变文字含义。</summary>
+    [Fact]
+    public void SuspendingMixedDraftRestoresHalfOpaquePlaceholder() => Sta(() =>
+    {
+        var (view, value) = MixedComment();
+        Focus(value, true); value.Text = "未提交"; Focus(value, false);
+        view.SuspendEditing(); view.SuspendEditing();
+        Assert.True(value.IsReadOnly); Assert.Equal("*(多种)", value.Text); Assert.Equal(0.5, value.Foreground.Opacity);
+    });
+
+    /// <summary>空字符串及真实 null 使用独立提示，深浅与只读状态只改变文字前景。</summary>
+    [Theory]
+    [InlineData("", "(空白)", false, false)]
+    [InlineData("", "(空白)", false, true)]
+    [InlineData("", "(空白)", true, false)]
+    [InlineData("", "(空白)", true, true)]
+    [InlineData(null, "(null)", false, false)]
+    [InlineData(null, "(null)", false, true)]
+    [InlineData(null, "(null)", true, false)]
+    [InlineData(null, "(null)", true, true)]
+    public void EmptyAndNullUseHalfOpaquePlaceholders(string? raw, string placeholder, bool dark, bool readOnly) => Sta(() =>
+    {
+        var (view, _, value) = Comment(raw); int writes = 0; view.EditRequested += _ => writes++;
+        if (readOnly)
+            view.Show(new("阀门", 1, [new(view.ReadSpecs()[0], FastPropertyValue.Value(raw),
+                PnEditPermission.ReadOnly("图层锁定"))], "只读"));
+        view.SetTheme(dark);
+        Assert.Equal(placeholder, value.Text); Assert.Equal(0.5, value.Foreground.Opacity);
+        Assert.Equal(1, value.Opacity); Assert.Equal(1, value.Background.Opacity);
+        Assert.Equal(1, value.CaretBrush.Opacity); Assert.Equal(1, value.SelectionBrush.Opacity);
+        value.SelectAll(); Assert.Equal(placeholder, value.SelectedText); Assert.NotNull(value.ToolTip);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter); Assert.Equal(0, writes);
+        if (!readOnly)
+        {
+            Assert.Equal("", value.Text);
+            var hint = Children<TextBlock>(view).Single(t => t.Text == placeholder && t.Visibility == Visibility.Visible);
+            Assert.Equal(0.5, hint.Opacity);
+            value.Text = placeholder; Assert.Equal(1, value.Foreground.Opacity);
+            Focus(value, false); Assert.Equal(0, writes); Assert.Equal(placeholder, value.Text);
+            Focus(value, true); Key(value, System.Windows.Input.Key.Escape);
+            Key(value, System.Windows.Input.Key.Enter); Assert.Equal(0, writes);
+        }
+        Focus(value, false); Assert.Equal(placeholder, value.Text); Assert.Equal(0.5, value.Foreground.Opacity);
+        view.SetTheme(!dark); Assert.Equal(0.5, value.Foreground.Opacity);
+    });
+
+    /// <summary>真实提示同文、null 文本、空格和制表符都按普通值显示，不修剪或虚构占位。</summary>
+    [Theory]
+    [InlineData("*(多种)")]
+    [InlineData("(空白)")]
+    [InlineData("(null)")]
+    [InlineData("null")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public void LiteralPlaceholderTextAndWhitespaceStayOpaque(string raw) => Sta(() =>
+    {
+        var (view, _, value) = Comment(raw); int writes = 0; view.EditRequested += _ => writes++;
+        foreach (bool dark in new[] { true, false })
+        {
+            view.SetTheme(dark); Assert.Equal(raw, value.Text); Assert.Equal(1, value.Foreground.Opacity);
+            Focus(value, true); Key(value, System.Windows.Input.Key.Enter); Focus(value, false);
+            Assert.Equal(raw, value.Text); Assert.Equal(0, writes);
+        }
+    });
+
+    /// <summary>明确清空 null 不与未修改混淆，失焦后等 Enter，并保留真实 null 原值。</summary>
+    [Fact]
+    public void ExplicitNullClearKeepsNullOriginalAndSubmitsOnlyOnEnter() => Sta(() =>
+    {
+        var (view, _, value) = Comment(null); var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter); Assert.Empty(edits);
+        Key(value, System.Windows.Input.Key.Delete); Focus(value, false);
+        Assert.Empty(edits); Assert.Equal("", value.Text); Assert.Equal(1, value.Foreground.Opacity);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Null(edits[0].Original); Assert.Equal("", edits[0].Value);
+    });
+
+    /// <summary>即使票据相同，null 和空字符串之间的原值变化也必须撤销草稿。</summary>
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData("", null)]
+    public void NullEmptyOriginalTransitionInvalidatesDraft(string? before, string? after) => Sta(() =>
+    {
+        var (view, _, value) = Comment(before); var snapshot = Snapshot(view, before); view.Show(snapshot);
+        int writes = 0; view.EditRequested += _ => writes++;
+        Focus(value, true); value.Text = "旧草稿"; Focus(value, false);
+        view.Show(snapshot with { Cells = snapshot.Cells.Select((c, i) => i == 0
+            ? c with { Value = FastPropertyValue.Value(after) } : c).ToArray() });
+        Assert.Equal(after == null ? "(null)" : "(空白)", value.Text);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter); Assert.Equal(0, writes);
+    });
+
+    /// <summary>草稿用主题背景及 Tooltip 表达，实际输入无后缀；失焦保持，撤销／提交清除。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DraftStatusUsesBackgroundAndTooltipWithoutChangingValue(bool dark) => Sta(() =>
+    {
+        var (view, _, value) = Comment(); var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
+        view.SetTheme(dark); Focus(value, true); value.Text = "新备注"; Focus(value, false);
+        Assert.Equal("新备注", value.Text); Assert.Empty(edits); Assert.Equal(1, value.Foreground.Opacity);
+        Assert.Equal(((SolidColorBrush)view.Resources["PanelDraftBackground"]).Color, ((SolidColorBrush)value.Background).Color);
+        Assert.Contains("尚未提交", ((TextBlock)((ToolTip)value.ToolTip).Content).Text);
+        view.SetTheme(!dark);
+        Assert.Equal(((SolidColorBrush)view.Resources["PanelDraftBackground"]).Color, ((SolidColorBrush)value.Background).Color);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Escape);
+        Assert.Equal("原备注", value.Text);
+        Assert.Equal(((SolidColorBrush)view.Resources["PanelSurface"]).Color, ((SolidColorBrush)value.Background).Color);
+        Assert.DoesNotContain("尚未提交", ((TextBlock)((ToolTip)value.ToolTip).Content).Text);
+        value.Text = "临时"; value.Text = "原备注"; Key(value, System.Windows.Input.Key.Enter);
+        Assert.Empty(edits);
+        Assert.Equal(((SolidColorBrush)view.Resources["PanelSurface"]).Color, ((SolidColorBrush)value.Background).Color);
+        value.Text = "实际提交值"; Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal("实际提交值", edits[0].Value);
+        Assert.DoesNotContain("尚未提交", value.Text);
+        Assert.DoesNotContain("尚未提交", ((TextBlock)((ToolTip)value.ToolTip).Content).Text);
     });
 
     private static void PumpMenuCleanup() => Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);

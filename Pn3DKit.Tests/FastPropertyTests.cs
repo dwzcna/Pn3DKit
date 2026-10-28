@@ -57,7 +57,7 @@ public sealed class FastPropertyTests
     public void DifferentFieldOnlyBecomesMixed(FastProperty field, string different)
     {
         var result = FastPropertyPolicy.Merge([Plant(), With(Plant(), field, FastPropertyValue.Value(different))]);
-        Assert.Equal("多种值", result.Values[(int)field].Display);
+        Assert.Equal("*(多种)", result.Values[(int)field].Display);
         Assert.Equal(FastValueKind.Mixed, result.Values[(int)field].Kind);
         Assert.Contains(different, result.Values[(int)field].Detail);
         Assert.Equal("PnId", result.Values[4].Display);
@@ -69,7 +69,7 @@ public sealed class FastPropertyTests
     {
         var result = FastPropertyPolicy.Merge([Plant(), Plant(classKey: "PnId:CheckValve")]);
         Assert.Equal("多种对象（2 个对象）", result.Header);
-        Assert.Equal("多种值", result.Values[5].Display);
+        Assert.Equal("*(多种)", result.Values[5].Display);
     }
 
     /// <summary>原始字符串采用 Ordinal 比较，大小写不同的位号不冒充共同值。</summary>
@@ -89,7 +89,7 @@ public sealed class FastPropertyTests
         cad = With(cad, FastProperty.Type, FastPropertyValue.Value("LINE"));
         var result = FastPropertyPolicy.Merge([Plant(), cad]);
         Assert.Equal("多种对象（2 个对象）", result.Header);
-        Assert.Equal("多种值", result.Values[0].Display);
+        Assert.Equal("*(多种)", result.Values[0].Display);
         Assert.Equal("设备", result.Values[1].Display);
         Assert.All(result.Values.Skip(4), v => Assert.Equal(FastValueKind.Missing, v.Kind));
         Assert.Contains("不适用于所有", result.Values[6].Detail);
@@ -102,7 +102,7 @@ public sealed class FastPropertyTests
         var empty = With(Plant(), FastProperty.Tag, FastPropertyValue.Value(""));
         var missing = With(Plant(), FastProperty.Tag, FastPropertyValue.Missing("没有 Tag 列"));
         var literal = With(Plant(), FastProperty.Tag, FastPropertyValue.Value("—"));
-        Assert.Equal("", FastPropertyPolicy.Merge([empty]).Values[6].Display);
+        Assert.Equal("(空白)", FastPropertyPolicy.Merge([empty]).Values[6].Display);
         Assert.Equal(FastValueKind.Value, FastPropertyPolicy.Merge([empty, empty]).Values[6].Kind);
         Assert.Equal(FastValueKind.Mixed, FastPropertyPolicy.Merge([empty, literal]).Values[6].Kind);
         Assert.Equal(FastValueKind.Missing, FastPropertyPolicy.Merge([missing, literal]).Values[6].Kind);
@@ -191,7 +191,7 @@ public sealed class FastPropertyTests
         var result = batch.Step(identity, Read);
         Assert.NotNull(result);
         Assert.Equal(105, result.Count);
-        Assert.Equal("多种值", result.Values[6].Display);
+        Assert.Equal("*(多种)", result.Values[6].Display);
         Assert.Equal(targets, read);
         Assert.False(batch.HasWork);
     }

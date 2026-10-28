@@ -10,8 +10,8 @@ internal interface IFastPlantProperties
     bool IsCurrent { get; }
     IReadOnlyList<PnPropertyCatalogEntry> Catalog(ObjectId id);
     PnObjectProperties Read(ObjectId id, Document document, Transaction transaction, IReadOnlyList<PnPropertySpec> specs);
-    PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string original, string value);
-    string Write(ObjectId id, Document document, PnPropertySpec spec, string original, string value, Action<string> validate);
+    PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string? original, string value);
+    string Write(ObjectId id, Document document, PnPropertySpec spec, string? original, string value, Action<string> validate);
 }
 
 /// <summary>主线程访问门面；缺少 Plant 时仅显示不适用，不强制加载模块。</summary>
@@ -50,7 +50,7 @@ internal sealed class FastPropertyAccess
     }
 
     /// <summary>只读预检同一新值的字段类型、长度和登记占用，实际写入仍重复检查。</summary>
-    internal PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string original, string value) =>
+    internal PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string? original, string value) =>
         _plant.Prepare(id, document, spec, original, value);
 
     /// <summary>可容错的目标标签，不使用句柄代替完整 ObjectId 身份。</summary>
@@ -61,7 +61,7 @@ internal sealed class FastPropertyAccess
     }
 
     /// <summary>只在正确命令上下文、写前校验后调用；具体适配再次核对权限并回读。</summary>
-    internal string Write(ObjectId id, Document document, PnPropertySpec spec, string original, string value, Action<string> validate) =>
+    internal string Write(ObjectId id, Document document, PnPropertySpec spec, string? original, string value, Action<string> validate) =>
         _plant.Write(id, document, spec, original, value, validate);
 
     internal static string Describe(System.Exception ex) => ex is Autodesk.AutoCAD.Runtime.Exception cad
@@ -75,9 +75,9 @@ internal sealed class FastPropertyAccess
         public PnObjectProperties Read(ObjectId id, Document document, Transaction transaction, IReadOnlyList<PnPropertySpec> specs) =>
             new("", "所选对象", specs.Select(s => new PnPropertyCell(s, FastPropertyValue.Missing("当前 Plant 环境不可用：" + detail),
                 PnEditPermission.ReadOnly("当前 Plant 环境不可用。"))).ToArray());
-        public PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string original, string value) =>
+        public PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string? original, string value) =>
             throw new InvalidOperationException("当前 Plant 环境不可用。");
-        public string Write(ObjectId id, Document document, PnPropertySpec spec, string original, string value, Action<string> validate) =>
+        public string Write(ObjectId id, Document document, PnPropertySpec spec, string? original, string value, Action<string> validate) =>
             throw new InvalidOperationException("当前 Plant 环境不可用。");
     }
 }

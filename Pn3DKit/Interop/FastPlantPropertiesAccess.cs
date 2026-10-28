@@ -103,7 +103,7 @@ internal static class FastPlantPropertiesAccess
         }
 
         /// <summary>普通字段只读取自身明确约束；位号格式及登记仅供 Tag 专用流程使用。</summary>
-        private PnEditPermission GetPermission(PlantTagContext context, string property, string value, Document document,
+        private PnEditPermission GetPermission(PlantTagContext context, string property, string? value, Document document,
             bool locked, string? stateError)
         {
             if (stateError != null) return PnEditPermission.ReadOnly("无法确认图层状态：" + stateError);
@@ -138,7 +138,7 @@ internal static class FastPlantPropertiesAccess
         }
 
         /// <summary>仅 Tag 需要格式及登记；普通 Comment 等字段不依赖此流程。</summary>
-        private PnEditPermission TagPermission(PlantTagContext context, string value)
+        private PnEditPermission TagPermission(PlantTagContext context, string? value)
         {
             var table = context.Links.GetPnPDatabase().Tables[context.ClassName];
             if (context.PartName != "PnId" || table.IsKindOf("PipeLines") || table.IsKindOf("PipeLineGroup")
@@ -154,7 +154,7 @@ internal static class FastPlantPropertiesAccess
         }
 
         /// <summary>只读检查新值类型、长度及 Tag 登记，不调用 SetProperties。</summary>
-        public PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string original, string value)
+        public PnPropertyWritePlan<ObjectId> Prepare(ObjectId id, Document document, PnPropertySpec spec, string? original, string value)
         {
             try { return PrepareCore(id, document, spec, original, value).Plan; }
             catch (System.Exception ex) { throw new InvalidOperationException(PlantProjectTagAccess.Error(ex), ex); }
@@ -162,7 +162,7 @@ internal static class FastPlantPropertiesAccess
 
         /// <summary>预检与实际写入共用完整的逐目标校验，继承列通过 AllColumns 解析。</summary>
         private (PlantTagContext Context, string Property, PnPropertyWritePlan<ObjectId> Plan) PrepareCore(
-            ObjectId id, Document document, PnPropertySpec spec, string original, string value)
+            ObjectId id, Document document, PnPropertySpec spec, string? original, string value)
         {
             if (!IsCurrent) throw new InvalidOperationException("当前 Plant 项目已变化。");
             string path = PnPropertyPolicy.Normalize(spec.Input, out string reason) ?? throw new InvalidOperationException(reason);
@@ -199,14 +199,14 @@ internal static class FastPlantPropertiesAccess
         }
 
         /// <summary>写入前再次验证，立即回读及核对 Tag 登记；整批结束后由协调器统一 Regen。</summary>
-        public string Write(ObjectId id, Document document, PnPropertySpec spec, string original, string value, Action<string> validate)
+        public string Write(ObjectId id, Document document, PnPropertySpec spec, string? original, string value, Action<string> validate)
         {
             try { return WriteCore(id, document, spec, original, value, validate); }
             catch (System.Exception ex) { throw new InvalidOperationException(PlantProjectTagAccess.Error(ex), ex); }
         }
 
         /// <summary>修改后异常保留实际回读，不承诺 DWG 事务已回滚 Plant 缓存。</summary>
-        private string WriteCore(ObjectId id, Document document, PnPropertySpec spec, string original, string value, Action<string> validate)
+        private string WriteCore(ObjectId id, Document document, PnPropertySpec spec, string? original, string value, Action<string> validate)
         {
             var prepared = PrepareCore(id, document, spec, original, value);
             var context = prepared.Context;
@@ -220,29 +220,29 @@ internal static class FastPlantPropertiesAccess
                     context.Links.SetProperties(id, new StringCollection { property }, new StringCollection { value });
                     transaction.Commit();
                 }
-                string actual = ReadValue(context, property);
-                if (actual != value) throw new InvalidOperationException("回读不符，实际值：" + actual);
+                string? actual = ReadValue(context, property);
+                if (actual != value) throw new InvalidOperationException("回读不符，实际值：" + FastPropertyValue.Value(actual).Display);
                 if (prepared.Plan.Registration is { } registration
                     && context.Links.FindRowByTag(registration.Registry, registration.Candidate) != context.RowId)
                     throw new InvalidOperationException("实际 Tag 已回读，但无法确认位号登记归属。");
-                return actual;
+                return actual!; // 已与非 null 的请求值完整核对相等。
             }
             catch (System.Exception ex)
             {
                 string actual;
-                try { actual = ReadValue(context, property); }
+                try { actual = FastPropertyValue.Value(ReadValue(context, property)).Display; }
                 catch (System.Exception read) { actual = "无法回读：" + PlantProjectTagAccess.Error(read); }
                 throw new InvalidOperationException(PlantProjectTagAccess.Error(ex) + "；实际值：" + actual
                     + "；不假定已回滚，请核对图纸和项目数据。", ex);
             }
         }
 
-        /// <summary>直接读取指定自身列；不将 Tag 隐式改为其他列，不展开关联来源。</summary>
-        private static string ReadValue(PlantTagContext context, string property)
+        /// <summary>读取指定自身列并保留 SDK 返回的 null；不展开关联或把空值改成显示标记。</summary>
+        private static string? ReadValue(PlantTagContext context, string property)
         {
             var values = context.Links.GetProperties(context.RowId, new StringCollection { property }, true);
             if (values.Count != 1) throw new InvalidOperationException("SDK 未返回属性值：" + property);
-            return values[0] ?? "";
+            return values[0];
         }
 
         private static PnObjectProperties Missing(IReadOnlyList<PnPropertySpec> specs, string reason, string label = "所选对象") =>

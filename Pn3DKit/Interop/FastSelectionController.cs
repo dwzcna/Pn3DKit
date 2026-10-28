@@ -52,6 +52,7 @@ internal sealed class FastSelectionController : IDisposable
     private void Invalidate(bool read)
     {
         _epoch++; _dirty = read; _batch.Invalidate(); _access = null; _tickets.Clear(); _readObjects.Clear(); _single = null;
+        _view.SuspendEditing(); // 事件发生即撤销草稿，不等下一次 Idle，避免旧对象输入被带到新票据。
         _view.SetCatalogAvailability(false, "选择或属性状态已变化，等待读取完成。");
     }
     private void PathsChanging() => Invalidate(false);

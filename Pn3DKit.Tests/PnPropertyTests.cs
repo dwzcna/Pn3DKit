@@ -127,7 +127,7 @@ public sealed class PnPropertyTests
         var result = PnPropertyPolicy.Merge(Specs, [Object(), Object("HV-1002")]);
         Assert.Equal(2, result.Count);
         Assert.Equal("DN50", result.Cells[0].Value.Display);
-        Assert.Equal("多种值", result.Cells[1].Value.Display);
+        Assert.Equal("*(多种)", result.Cells[1].Value.Display);
         Assert.All(result.Cells, c => Assert.True(c.Permission.Allowed));
     }
 
@@ -239,7 +239,7 @@ public sealed class PnPropertyTests
         Assert.Null(batch.Step(1, Read)); Assert.Null(batch.Step(1, Read));
         var result = batch.Step(1, Read);
         Assert.Equal(70, result?.Count); Assert.Equal(70, seen.Count);
-        Assert.Equal("多种值", result?.Cells[1].Value.Display);
+        Assert.Equal("*(多种)", result?.Cells[1].Value.Display);
     }
 
     /// <summary>输入路径时立即废弃旧结果，新轮次只显示新修订的属性。</summary>

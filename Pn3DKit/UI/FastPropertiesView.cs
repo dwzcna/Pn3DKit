@@ -13,6 +13,13 @@ namespace Pn3DKit.UI;
 /// <summary>可配置的两列 Plant 属性表；路径始终可输入，值按完整选择票据开放共有可写属性。</summary>
 internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
 {
+    // 仅给结构化混合、空白和 null 提示设置半透明前景，不改变控件、光标或选区透明度。
+    private static readonly DependencyProperty PlaceholderProperty = DependencyProperty.RegisterAttached(
+        "ValuePlaceholder", typeof(bool), typeof(FastPropertiesView), new FrameworkPropertyMetadata(false));
+    // 草稿以背景及提示表达，不把状态文字拼入实际输入。
+    private static readonly DependencyProperty DraftProperty = DependencyProperty.RegisterAttached(
+        "ValueDraft", typeof(bool), typeof(FastPropertiesView), new FrameworkPropertyMetadata(false));
+
     private sealed class PropertyRow
     {
         internal readonly Guid Id = Guid.NewGuid();
@@ -21,9 +28,10 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         internal required WpfTextBox Value;
         internal required Border Container;
         internal string Committed = "";
+        internal string Draft = "";
         internal bool PendingPath, Editing, Dirty, MenuOpen, MenuOpening;
         internal long MenuRevision;
-        internal required TextBlock MixedHint;
+        internal required TextBlock PlaceholderHint;
         internal PnPropertyCell? Cell;
     }
     private readonly List<PropertyRow> _rows = [];
@@ -77,8 +85,6 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         var tools = new WrapPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
         var add = Button("添加属性"); var remove = Button("删除属性");
         add.Click += (_, _) => FocusTrailingRow();
-        // 在鼠标引发失焦前停用草稿提交；实际点击移除时才撤销票据及行修订。
-        remove.PreviewMouseLeftButtonDown += (_, _) => { if (_active != null) _active.Editing = false; };
         remove.Click += (_, _) => { if (_active != null) RemoveRow(_active); };
         _catalog = Button("检索属性");
         _catalog.Click += (_, _) => { if (_catalog.IsEnabled) CatalogRequested?.Invoke(); };
@@ -129,6 +135,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             }
         }
         finally { _clearingMenus = false; }
+        SuspendEditing();
         _focusedInput = null; _observedFocus = null; _focusSuspended = false; PublishInputFocus();
     }
 
@@ -155,13 +162,14 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             {
                 var row = _rows.FirstOrDefault(r => r.Id == cell.Spec.Id);
                 if (row == null || row.Revision != cell.Spec.Revision || row.PendingPath) continue;
-                row.Cell = cell; row.Dirty = false;
+                bool keepDraft = row.Dirty && cell.Permission.Allowed && cell.EditToken != Guid.Empty
+                    && row.Cell is { } previous && previous.EditToken == cell.EditToken
+                    && previous.Spec == cell.Spec && previous.Value.Kind == cell.Value.Kind
+                    && previous.Value.Raw == cell.Value.Raw;
+                if (!keepDraft) { row.Dirty = false; row.Draft = ""; }
+                row.Cell = cell;
                 row.Value.IsReadOnly = !cell.Permission.Allowed || cell.EditToken == Guid.Empty;
-                row.Editing = !row.Value.IsReadOnly && ReferenceEquals(_focusedInput, row.Value);
-                row.Value.Text = row.Editing ? cell.Value.Raw : cell.Value.Display;
-                UpdateMixedHint(row);
-                row.Value.ToolTip = Tip(cell.Value.Display + (string.IsNullOrWhiteSpace(cell.Value.Detail) ? "" : "\n" + cell.Value.Detail)
-                    + "\n" + cell.Permission.Reason);
+                RestoreDisplay(row);
             }
         }
         finally { _updating = false; }
@@ -177,8 +185,11 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             foreach (var row in _rows)
             {
                 row.Value.IsReadOnly = true;
-                if (row.Editing) row.Value.Text = row.Cell?.Value.Display ?? "";
-                row.Cell = null; row.Editing = false; row.Dirty = false; UpdateMixedHint(row);
+                if (row.Cell != null) row.Value.Text = row.Cell.Value.Display;
+                row.Editing = false; row.Dirty = false; row.Draft = "";
+                if (row.Cell != null) UpdatePlaceholder(row);
+                else row.PlaceholderHint.Visibility = Visibility.Collapsed;
+                row.Cell = null;
             }
         }
         finally { _updating = false; }
@@ -209,13 +220,13 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     {
         var input = CellBox(); var value = CellBox(valueCell: true); value.IsReadOnly = true; value.Text = "";
         var grid = Columns(); grid.Children.Add(input); Grid.SetColumn(value, 1); grid.Children.Add(value);
-        var mixedHint = Text("多种值", new Thickness(8, 3, 6, 3)); mixedHint.IsHitTestVisible = false;
-        mixedHint.Visibility = Visibility.Collapsed; mixedHint.SetResourceReference(TextBlock.ForegroundProperty, "PanelMuted");
+        var mixedHint = Text("*(多种)", new Thickness(8, 3, 6, 3)); mixedHint.IsHitTestVisible = false;
+        mixedHint.Visibility = Visibility.Collapsed; mixedHint.Opacity = 0.5;
         Grid.SetColumn(mixedHint, 1); grid.Children.Add(mixedHint);
         var split = new Border { BorderThickness = new Thickness(1, 0, 0, 0), IsHitTestVisible = false };
         split.SetResourceReference(Border.BorderBrushProperty, "PanelBorder"); Grid.SetColumn(split, 1); grid.Children.Add(split);
         var container = Surface(grid); container.BorderThickness = new Thickness(1, 0, 1, 1);
-        var row = new PropertyRow { Input = input, Value = value, Container = container, Committed = name, MixedHint = mixedHint };
+        var row = new PropertyRow { Input = input, Value = value, Container = container, Committed = name, PlaceholderHint = mixedHint };
         input.Text = name;
         input.TextChanged += (_, _) =>
         {
@@ -238,39 +249,33 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         {
             _active = row;
             if (value.IsReadOnly || row.Cell == null || row.Editing) return;
-            row.Editing = true; row.Dirty = false;
+            row.Editing = true;
             _updating = true;
-            try { value.Text = row.Cell.Value.Raw; UpdateMixedHint(row); }
+            try { value.Text = row.Dirty ? row.Draft : row.Cell.Value.Raw ?? ""; UpdatePlaceholder(row); }
             finally { _updating = false; }
         };
         value.TextChanged += (_, _) =>
         {
             if (!_updating && ReferenceEquals(_focusedInput, value) && !value.IsReadOnly && row.Cell != null)
-            { row.Editing = true; row.Dirty = true; UpdateMixedHint(row); }
+            { row.Editing = true; row.Dirty = true; row.Draft = value.Text; UpdatePlaceholder(row); }
         };
         value.LostKeyboardFocus += (_, e) =>
         {
             TrackInputFocus(e.NewFocus);
             if (row.MenuOpen || row.MenuOpening) return;
-            CommitValue(row); RestoreDisplay(row);
+            RestoreDisplay(row);
         };
         value.PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter) { e.Handled = true; CommitValue(row); }
             else if (e.Key == Key.Escape)
             {
-                e.Handled = true; row.Dirty = false; row.Editing = !value.IsReadOnly && row.Cell != null;
-                if (row.Cell != null)
-                {
-                    _updating = true;
-                    try { value.Text = row.Cell.Value.Raw; UpdateMixedHint(row); }
-                    finally { _updating = false; }
-                }
+                e.Handled = true; row.Dirty = false; row.Draft = ""; RestoreDisplay(row);
             }
-            else if (e.Key is Key.Delete or Key.Back && !value.IsReadOnly && row.Cell?.Value.Kind == FastValueKind.Mixed)
+            else if (e.Key is Key.Delete or Key.Back && !value.IsReadOnly && row.Cell?.Value.Placeholder != null)
             {
-                // 混合值的输入缓冲本来为空；明确 Delete/Backspace 仍代表用户要求清空。
-                row.Editing = true; row.Dirty = true; UpdateMixedHint(row);
+                // 占位状态的空缓冲也需要区分明确清空和未修改；不把提示文字作为输入。
+                row.Editing = true; row.Dirty = true; row.Draft = value.Text; UpdatePlaceholder(row);
             }
         };
         BindRemoveShortcut(row, input); BindRemoveShortcut(row, value);
@@ -382,31 +387,45 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         return menu;
     }
 
-    /// <summary>菜单没有打开或已经关闭后按实际焦点收尾，返回编辑器不丢草稿，离开才提交。</summary>
+    /// <summary>菜单结束后释放借用焦点；值草稿保留到回车，路径仍按失焦确认。</summary>
     private void FinishMenu(PropertyRow row)
     {
         row.MenuOpening = false; row.MenuOpen = false;
         TrackInputFocus(_observedFocus);
         if (!ReferenceEquals(_observedFocus, row.Input)) CommitPath(row);
-        if (!ReferenceEquals(_observedFocus, row.Value)) { CommitValue(row); RestoreDisplay(row); }
+        RestoreDisplay(row);
     }
 
+    /// <summary>焦点切换只切换原值、混合提示和当前票据的草稿显示，不产生提交。</summary>
     private void RestoreDisplay(PropertyRow row)
     {
         if (row.Cell == null) return;
+        bool updating = _updating;
         _updating = true;
         try
         {
             row.Editing = !row.Value.IsReadOnly && ReferenceEquals(_observedFocus, row.Value);
-            row.Value.Text = row.Editing ? row.Cell.Value.Raw : row.Cell.Value.Display;
-            UpdateMixedHint(row);
+            string text = row.Dirty ? row.Draft : row.Editing ? row.Cell.Value.Raw ?? "" : row.Cell.Value.Display;
+            if (row.Value.Text != text) row.Value.Text = text;
+            UpdatePlaceholder(row);
         }
-        finally { _updating = false; }
+        finally { _updating = updating; }
     }
 
-    private static void UpdateMixedHint(PropertyRow row) => row.MixedHint.Visibility =
-        row.Editing && !row.Dirty && row.Cell?.Value.Kind == FastValueKind.Mixed && row.Value.Text.Length == 0
+    /// <summary>按结构化状态显示混合、空白或 null 占位；真实同文输入仍使用正常前景。</summary>
+    private static void UpdatePlaceholder(PropertyRow row)
+    {
+        string? placeholder = row.Cell?.Value.Placeholder;
+        bool draft = row.Dirty && !row.Value.IsReadOnly && row.Cell?.EditToken is { } token && token != Guid.Empty;
+        row.Value.SetValue(DraftProperty, draft);
+        row.Value.SetValue(PlaceholderProperty, !row.Dirty && placeholder != null);
+        row.PlaceholderHint.Text = placeholder ?? "";
+        row.PlaceholderHint.Visibility = row.Editing && !row.Dirty && placeholder != null && string.IsNullOrWhiteSpace(row.Value.Text)
             ? Visibility.Visible : Visibility.Collapsed;
+        if (row.Cell is { } cell)
+            row.Value.ToolTip = Tip(cell.Value.Display + (string.IsNullOrWhiteSpace(cell.Value.Detail) ? "" : "\n" + cell.Value.Detail)
+                + "\n" + cell.Permission.Reason + (draft ? "\n尚未提交；按 Enter 提交，Esc 撤销。" : ""));
+    }
 
     /// <summary>回车或离开路径单元格才触发读取，编辑过程中不查询新路径。</summary>
     private void CommitPath(PropertyRow row)
@@ -417,17 +436,15 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         row.Input.ToolTip = Tip(path ?? reason); EnsureTrailingRow(); RowsCommitted?.Invoke();
     }
 
-    /// <summary>提交当前票据及原值；视图不操作 SDK，拒绝过期由宿主再次验证。</summary>
+    /// <summary>仅回车提交当前票据绑定的草稿；视图不操作 SDK，过期由宿主再次验证。</summary>
     private void CommitValue(PropertyRow row)
     {
         if (_updating || _clearingMenus || !_rows.Contains(row) || row.MenuOpen || row.MenuOpening || !row.Editing || !row.Dirty || row.Value.IsReadOnly || row.Cell == null) return;
-        var cell = row.Cell; row.Editing = false; row.Dirty = false; UpdateMixedHint(row);
-        string value = row.Value.Text;
+        var cell = row.Cell; string value = row.Draft;
+        row.Editing = false; row.Dirty = false; row.Draft = ""; UpdatePlaceholder(row);
         if (cell.Value.Kind == FastValueKind.Value && value == cell.Value.Raw)
         {
-            _updating = true;
-            try { row.Value.Text = ReferenceEquals(_focusedInput, row.Value) ? cell.Value.Raw : cell.Value.Display; }
-            finally { _updating = false; }
+            RestoreDisplay(row);
             return;
         }
         string? path = PnPropertyPolicy.Normalize(cell.Spec.Input, out _);
@@ -441,13 +458,19 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     internal void SetTheme(bool dark)
     {
         string[] keys = ["PanelBackground", "PanelSurface", "PanelForeground", "PanelMuted", "PanelBorder", "PanelHeader", "PanelSelection",
-            "PanelReadOnlyBackground", "PanelReadOnlyForeground", "PanelMenuHover"];
-        string[] colors = dark ? ["#384252", "#3E4959", "#EDF1F6", "#C1CAD6", "#505D70", "#2D3644", "#6686AB", "#354050", "#9FA9B7", "#4B617E"]
-            : ["#EDF0F4", "#F9FAFC", "#263244", "#59697D", "#CBD3DD", "#DEE4EC", "#A8C8E8", "#E6E9EE", "#737C88", "#D5E2F2"];
+            "PanelReadOnlyBackground", "PanelReadOnlyForeground", "PanelMenuHover", "PanelDraftBackground"];
+        string[] colors = dark ? ["#384252", "#3E4959", "#EDF1F6", "#C1CAD6", "#505D70", "#2D3644", "#6686AB", "#354050", "#9FA9B7", "#4B617E", "#5A492E"]
+            : ["#EDF0F4", "#F9FAFC", "#263244", "#59697D", "#CBD3DD", "#DEE4EC", "#A8C8E8", "#E6E9EE", "#737C88", "#D5E2F2", "#FFF1CE"];
         for (int i = 0; i < keys.Length; i++)
         {
             var brush = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(colors[i]));
             brush.Freeze(); Resources[keys[i]] = brush;
+        }
+        foreach (string key in new[] { "PanelForeground", "PanelReadOnlyForeground" })
+        {
+            var mixed = ((SolidColorBrush)Resources[key]).Clone();
+            mixed.Opacity = 0.5; mixed.Freeze();
+            Resources[key.Replace("Foreground", "PlaceholderForeground")] = mixed;
         }
     }
 
@@ -476,6 +499,19 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             readOnly.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("PanelReadOnlyBackground")));
             readOnly.Setters.Add(new Setter(ForegroundProperty, new DynamicResourceExtension("PanelReadOnlyForeground")));
             style.Triggers.Add(readOnly);
+            var mixed = new Trigger { Property = PlaceholderProperty, Value = true };
+            mixed.Setters.Add(new Setter(ForegroundProperty, new DynamicResourceExtension("PanelPlaceholderForeground")));
+            style.Triggers.Add(mixed);
+            var mixedReadOnly = new MultiTrigger();
+            mixedReadOnly.Conditions.Add(new Condition(PlaceholderProperty, true));
+            mixedReadOnly.Conditions.Add(new Condition(WpfTextBox.IsReadOnlyProperty, true));
+            mixedReadOnly.Setters.Add(new Setter(ForegroundProperty, new DynamicResourceExtension("PanelReadOnlyPlaceholderForeground")));
+            style.Triggers.Add(mixedReadOnly);
+            var draft = new MultiTrigger();
+            draft.Conditions.Add(new Condition(DraftProperty, true));
+            draft.Conditions.Add(new Condition(WpfTextBox.IsReadOnlyProperty, false));
+            draft.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("PanelDraftBackground")));
+            style.Triggers.Add(draft);
             box.Style = style;
         }
         else
