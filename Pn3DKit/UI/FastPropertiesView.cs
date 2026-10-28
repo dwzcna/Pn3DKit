@@ -30,7 +30,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         internal string Committed = "";
         internal string Draft = "";
         internal bool PendingPath, Editing, Dirty, MenuOpen, MenuOpening;
-        internal long MenuRevision;
+        internal long MenuRevision, DraftRevision;
         internal required TextBlock PlaceholderHint;
         internal PnPropertyCell? Cell;
     }
@@ -38,6 +38,9 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     private readonly StackPanel _table = new();
     private readonly ResourceDictionary _controlStyles = FastPanelControlStyles.CreateResources();
     private readonly RoutedUICommand _removePropertyRow = new("移除此属性行", "RemovePropertyRow", typeof(FastPropertiesView));
+    private readonly RoutedUICommand _unifyValue = new("统一键值", "UnifyValue", typeof(FastPropertiesView));
+    private PnUnifiedValueRequest? _unifyRequest;
+    private int _selectionCount;
     private readonly TextBlock _objectType;
     private readonly TextBlock _footer;
     private readonly WpfButton _catalog;
@@ -51,6 +54,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     internal event Action? RowsCommitted;
     internal event Action<PnEditRequest>? EditRequested;
     internal event Action? CatalogRequested;
+    internal event Action<PnUnifiedValueRequest>? UnifyValueRequested;
 
     /// <summary>默认一空行；无对象、缺少项目或忙碌时仍允许修改属性列及增删行。</summary>
     internal FastPropertiesView()
@@ -153,6 +157,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     /// <summary>仅更新原有单元格；路径修订不同的结果直接丢弃。</summary>
     internal void Show(PnPanelSnapshot snapshot)
     {
+        _selectionCount = snapshot.Count;
         _objectType.Text = snapshot.Header; _objectType.ToolTip = Tip(snapshot.Header);
         ShowStatus(snapshot.Status);
         _updating = true;
@@ -166,7 +171,12 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
                     && row.Cell is { } previous && previous.EditToken == cell.EditToken
                     && previous.Spec == cell.Spec && previous.Value.Kind == cell.Value.Kind
                     && previous.Value.Raw == cell.Value.Raw;
-                if (!keepDraft) { row.Dirty = false; row.Draft = ""; }
+                if (!keepDraft)
+                {
+                    if (row.Dirty || row.Cell?.EditToken != cell.EditToken || row.Cell?.Value.Kind != cell.Value.Kind
+                        || row.Cell?.Value.Raw != cell.Value.Raw) row.DraftRevision++;
+                    row.Dirty = false; row.Draft = "";
+                }
                 row.Cell = cell;
                 row.Value.IsReadOnly = !cell.Permission.Allowed || cell.EditToken == Guid.Empty;
                 RestoreDisplay(row);
@@ -178,6 +188,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     /// <summary>状态变化立即撤销编辑许可，保留路径输入；读取权限重新确认后再开放。</summary>
     internal void SuspendEditing()
     {
+        _unifyRequest = null;
         SetCatalogAvailability(false, "正在刷新或忙碌，暂不可检索。");
         _updating = true;
         try
@@ -186,7 +197,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             {
                 row.Value.IsReadOnly = true;
                 if (row.Cell != null) row.Value.Text = row.Cell.Value.Display;
-                row.Editing = false; row.Dirty = false; row.Draft = "";
+                row.Editing = false; row.Dirty = false; row.Draft = ""; row.DraftRevision++;
                 if (row.Cell != null) UpdatePlaceholder(row);
                 else row.PlaceholderHint.Visibility = Visibility.Collapsed;
                 row.Cell = null;
@@ -257,7 +268,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         value.TextChanged += (_, _) =>
         {
             if (!_updating && ReferenceEquals(_focusedInput, value) && !value.IsReadOnly && row.Cell != null)
-            { row.Editing = true; row.Dirty = true; row.Draft = value.Text; UpdatePlaceholder(row); }
+            { row.Editing = true; row.Dirty = true; row.Draft = value.Text; row.DraftRevision++; UpdatePlaceholder(row); }
         };
         value.LostKeyboardFocus += (_, e) =>
         {
@@ -270,15 +281,16 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             if (e.Key == Key.Enter) { e.Handled = true; CommitValue(row); }
             else if (e.Key == Key.Escape)
             {
-                e.Handled = true; row.Dirty = false; row.Draft = ""; RestoreDisplay(row);
+                e.Handled = true; row.Dirty = false; row.Draft = ""; row.DraftRevision++; RestoreDisplay(row);
             }
             else if (e.Key is Key.Delete or Key.Back && !value.IsReadOnly && row.Cell?.Value.Placeholder != null)
             {
                 // 占位状态的空缓冲也需要区分明确清空和未修改；不把提示文字作为输入。
-                row.Editing = true; row.Dirty = true; row.Draft = value.Text; UpdatePlaceholder(row);
+                row.Editing = true; row.Dirty = true; row.Draft = value.Text; row.DraftRevision++; UpdatePlaceholder(row);
             }
         };
         BindRemoveShortcut(row, input); BindRemoveShortcut(row, value);
+        BindUnifyShortcut(row, value);
         input.ContextMenu = RowMenu(row, input); value.ContextMenu = RowMenu(row, value);
         int index = beforeTail && _rows.Count != 0 && IsPlaceholder(_rows[^1]) ? _rows.Count - 1 : _rows.Count;
         _rows.Insert(index, row); _table.Children.Insert(index, container);
@@ -340,6 +352,99 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         return true;
     }
 
+    /// <summary>混合值且全部可写时才开放；只查询面板快照，不在菜单开启时访问 SDK。</summary>
+    private string? UnifyReason(PropertyRow row, bool includePending = true)
+    {
+        if (!_rows.Contains(row) || row.PendingPath) return "属性行已移除或路径尚未确认。";
+        if (_selectionCount < 2) return "请选择多个 Plant 对象并等待读取完成。";
+        if (row.Cell?.Value.Kind != FastValueKind.Mixed) return "仅不同值的共有属性可以统一键值。";
+        if (!row.Cell.Permission.Allowed) return row.Cell.Permission.Reason;
+        if (row.Cell.EditToken == Guid.Empty || row.Value.IsReadOnly) return "编辑票据已失效或环境忙碌，请等待读取完成。";
+        if (includePending && _unifyRequest != null) return "正在打开或使用统一键值窗口，请勿重复操作。";
+        return null;
+    }
+
+    /// <summary>只绑定值格；禁用和长按也消费 Ctrl+U，避免传到 CAD 全局快捷键。</summary>
+    private void BindUnifyShortcut(PropertyRow row, WpfTextBox box)
+    {
+        box.CommandBindings.Add(new CommandBinding(_unifyValue,
+            (_, e) => { e.Handled = true; QueueUnify(row); },
+            (_, e) => { e.Handled = true; e.CanExecute = UnifyReason(row) == null; }));
+        box.InputBindings.Add(new KeyBinding(_unifyValue, new KeyGesture(Key.U, ModifierKeys.Control)) { CommandTarget = box });
+        box.PreviewKeyDown += (_, e) => HandleUnifyShortcut(e, box, e.KeyboardDevice.Modifiers);
+    }
+
+    /// <summary>统一键值与菜单复用同一命令；参数化修饰键只供本地路由，不注册宿主快捷键。</summary>
+    private bool HandleUnifyShortcut(System.Windows.Input.KeyEventArgs args, WpfTextBox box, ModifierKeys modifiers)
+    {
+        if (args.Key != Key.U || modifiers != ModifierKeys.Control) return false;
+        args.Handled = true;
+        if (!args.IsRepeat && _unifyValue.CanExecute(null, box)) _unifyValue.Execute(null, box);
+        return true;
+    }
+
+    /// <summary>先关闭右键菜单，再延迟固定文本请求；重复命令只排队一次。</summary>
+    private void QueueUnify(PropertyRow row)
+    {
+        if (UnifyReason(row) != null || row.Cell == null) return;
+        string? path = PnPropertyPolicy.Normalize(row.Committed, out _);
+        if (path == null) return;
+        var request = new PnUnifiedValueRequest(row.Cell.EditToken, row.Id, row.Revision, path,
+            row.DraftRevision, row.Dirty ? row.Draft : null);
+        _unifyRequest = request;
+        row.Value.ContextMenu.IsOpen = false;
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            if (IsUnifiedRequestCurrent(request) && UnifyValueRequested is { } handler) handler(request);
+            else CompleteUnifiedRequest(request, restoreFocus: false);
+        }));
+    }
+
+    /// <summary>行、路径、非空票据、权限和独立草稿修订必须全部保持；不读取 CAD。</summary>
+    internal bool IsUnifiedRequestCurrent(PnUnifiedValueRequest request) => UnifiedRow(request) != null;
+
+    private PropertyRow? UnifiedRow(PnUnifiedValueRequest request)
+    {
+        if (_unifyRequest != request) return null;
+        var row = _rows.FirstOrDefault(x => x.Id == request.RowId);
+        return row != null && UnifyReason(row, includePending: false) == null
+            && row.Revision == request.RowRevision && row.DraftRevision == request.DraftRevision
+            && row.Cell!.EditToken == request.Token && PnPropertyPolicy.Normalize(row.Committed, out _) == request.Path
+            ? row : null;
+    }
+
+    /// <summary>确认仅回填当前票据的草稿；不提交、改路径、刷新票据或触发 SDK 写入。</summary>
+    internal bool TryApplyUnifiedDraft(PnUnifiedValueRequest request, string value)
+    {
+        var row = UnifiedRow(request);
+        if (row == null) return false;
+        bool updating = _updating; _updating = true;
+        try
+        {
+            row.Draft = value; row.Dirty = true; row.DraftRevision++;
+            row.Value.Text = value; UpdatePlaceholder(row);
+        }
+        finally { _updating = updating; }
+        _unifyRequest = null; RestoreUnifiedFocus(row, request.Token, row.DraftRevision);
+        return true;
+    }
+
+    /// <summary>取消及异常只结束请求；有效时延迟恢复原格焦点，不能触发提交。</summary>
+    internal void CompleteUnifiedRequest(PnUnifiedValueRequest request, bool restoreFocus = true)
+    {
+        if (_unifyRequest != request) return;
+        var row = UnifiedRow(request); _unifyRequest = null;
+        if (restoreFocus && row != null) RestoreUnifiedFocus(row, request.Token, row.DraftRevision);
+    }
+
+    /// <summary>等模态键盘事件结束后再恢复；新输入或上下文变化后不抢焦点。</summary>
+    private void RestoreUnifiedFocus(PropertyRow row, Guid token, long draftRevision) =>
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            if (_rows.Contains(row) && !row.Value.IsReadOnly && row.Cell?.EditToken == token && row.DraftRevision == draftRevision)
+                row.Value.Focus();
+        }));
+
     /// <summary>保留文本菜单，增加行级移除；弹出菜单借用焦点不隐式写入值。</summary>
     private ContextMenu RowMenu(PropertyRow row, WpfTextBox box)
     {
@@ -351,17 +456,33 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             ("复制", ApplicationCommands.Copy), ("粘贴", ApplicationCommands.Paste), ("全选", ApplicationCommands.SelectAll) })
             menu.Items.Add(new MenuItem { Header = pair.Item1, Command = pair.Item2, CommandTarget = box, Style = itemStyle });
         menu.Items.Add(new Separator { Style = (Style)_controlStyles[typeof(Separator)] });
+        MenuItem? unify = null;
+        if (ReferenceEquals(box, row.Value))
+        {
+            unify = new MenuItem { Header = "统一键值", Style = itemStyle, Command = _unifyValue,
+                CommandTarget = box, InputGestureText = "Ctrl+U" };
+            ToolTipService.SetShowOnDisabled(unify, true); menu.Items.Add(unify);
+        }
+        void UpdateUnifyTip()
+        {
+            if (unify != null) unify.ToolTip = Tip(UnifyReason(row) ?? "选择现有值或输入新值，确定只回填草稿，再按 Enter 提交。");
+        }
+        UpdateUnifyTip();
         var remove = new MenuItem
         {
             Header = "移除此属性行", Style = itemStyle, Command = _removePropertyRow,
             CommandTarget = box, InputGestureText = "Ctrl+D"
         };
         menu.Items.Add(remove);
-        menu.PreviewKeyDown += (_, e) => { if (HandleRemoveShortcut(e, box)) menu.IsOpen = false; };
+        menu.PreviewKeyDown += (_, e) =>
+        {
+            if (ReferenceEquals(box, row.Value) && HandleUnifyShortcut(e, box, e.KeyboardDevice.Modifiers)) menu.IsOpen = false;
+            else if (HandleRemoveShortcut(e, box)) menu.IsOpen = false;
+        };
         box.PreviewMouseRightButtonDown += (_, _) => _active = row;
         box.ContextMenuOpening += (_, _) =>
         {
-            row.MenuOpening = true; _active = row; remove.IsEnabled = !IsPlaceholder(row);
+            row.MenuOpening = true; _active = row; remove.IsEnabled = !IsPlaceholder(row); UpdateUnifyTip();
             long revision = ++row.MenuRevision;
             Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
             {
@@ -374,7 +495,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         menu.Opened += (_, _) =>
         {
             row.MenuRevision++; row.MenuOpening = false; row.MenuOpen = true;
-            _active = row; remove.IsEnabled = !IsPlaceholder(row);
+            _active = row; remove.IsEnabled = !IsPlaceholder(row); UpdateUnifyTip();
         };
         menu.Closed += (_, _) =>
         {
@@ -439,9 +560,9 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     /// <summary>仅回车提交当前票据绑定的草稿；视图不操作 SDK，过期由宿主再次验证。</summary>
     private void CommitValue(PropertyRow row)
     {
-        if (_updating || _clearingMenus || !_rows.Contains(row) || row.MenuOpen || row.MenuOpening || !row.Editing || !row.Dirty || row.Value.IsReadOnly || row.Cell == null) return;
+        if (_updating || _clearingMenus || _unifyRequest != null || !_rows.Contains(row) || row.MenuOpen || row.MenuOpening || !row.Editing || !row.Dirty || row.Value.IsReadOnly || row.Cell == null) return;
         var cell = row.Cell; string value = row.Draft;
-        row.Editing = false; row.Dirty = false; row.Draft = ""; UpdatePlaceholder(row);
+        row.Editing = false; row.Dirty = false; row.Draft = ""; row.DraftRevision++; UpdatePlaceholder(row);
         if (cell.Value.Kind == FastValueKind.Value && value == cell.Value.Raw)
         {
             RestoreDisplay(row);

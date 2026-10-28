@@ -22,6 +22,7 @@
     <Compile Include="../Pn3DKit/UI/FastPropertiesView.cs" Link="UI/FastPropertiesView.cs" />
     <Compile Include="../Pn3DKit/UI/FastPanelControlStyles.cs" Link="UI/FastPanelControlStyles.cs" />
     <Compile Include="../Pn3DKit/UI/PropertyCatalogView.cs" Link="UI/PropertyCatalogView.cs" />
+    <Compile Include="../Pn3DKit/UI/UnifiedValueView.cs" Link="UI/UnifiedValueView.cs" />
     <!-- 类别名称链接同一 SDK 适配源码，用只读替身验证项目优先、回退和取消。 -->
     <Compile Include="../Pn3DKit/Interop/PlantTagCatalogNames.cs" Link="Interop/PlantTagCatalogNames.cs" />
     <!-- 真实来源检索代码链接最小 SDK 替身，验证只读路径和释放；不加载 Autodesk。 -->

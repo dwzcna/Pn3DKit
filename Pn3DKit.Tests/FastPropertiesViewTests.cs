@@ -823,6 +823,228 @@ public sealed class FastPropertiesViewTests
         Assert.DoesNotContain("尚未提交", ((TextBlock)((ToolTip)value.ToolTip).Content).Text);
     });
 
+    /// <summary>值菜单和 Ctrl+U 指向同一本地命令，属性路径列及面板全局不绑定。</summary>
+    [Fact]
+    public void UnifyMenuAndKeyboardShareOnlyTheValueCellCommand() => Sta(() =>
+    {
+        var (view, value) = MixedComment(); var path = Children<TextBox>(view).First();
+        var binding = value.InputBindings.OfType<KeyBinding>().Single(x => x.Key == System.Windows.Input.Key.U);
+        var item = value.ContextMenu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "统一键值"));
+        Assert.Equal(ModifierKeys.Control, binding.Modifiers); Assert.Same(binding.Command, item.Command);
+        Assert.Same(value, item.CommandTarget); Assert.Equal("Ctrl+U", item.InputGestureText);
+        Assert.DoesNotContain(path.InputBindings.OfType<KeyBinding>(), x => x.Key == System.Windows.Input.Key.U);
+        Assert.DoesNotContain(path.ContextMenu.Items.OfType<MenuItem>(), x => Equals(x.Header, "统一键值"));
+        Assert.Empty(view.InputBindings); Assert.True(((RoutedCommand)binding.Command).CanExecute(null, value));
+        var requests = new List<PnUnifiedValueRequest>(); view.UnifyValueRequested += requests.Add;
+        ((RoutedCommand)binding.Command).Execute(null, value); ((RoutedCommand)item.Command).Execute(null, value);
+        PumpMenuCleanup(); Assert.Single(requests); Assert.Null(requests[0].Draft);
+        Assert.False(((RoutedCommand)binding.Command).CanExecute(null, value));
+        view.CompleteUnifiedRequest(requests[0], false);
+        Assert.True(((RoutedCommand)binding.Command).CanExecute(null, value));
+    });
+
+    /// <summary>非混合、单选、失效、只读及读取中一律拒绝，禁用仍有原因提示。</summary>
+    [Theory]
+    [InlineData("single")]
+    [InlineData("common")]
+    [InlineData("literal")]
+    [InlineData("readonly")]
+    [InlineData("ticket")]
+    [InlineData("missing")]
+    [InlineData("reading")]
+    [InlineData("path")]
+    [InlineData("suspend")]
+    public void UnifyRejectsEveryIneligibleCell(string state) => Sta(() =>
+    {
+        var (view, value) = MixedComment(); var spec = view.ReadSpecs()[0];
+        var data = state switch
+        {
+            "common" => FastPropertyValue.Value("共同值"), "literal" => FastPropertyValue.Value("*(多种)"),
+            "missing" => FastPropertyValue.AbsentProperty(), "reading" => FastPropertyValue.Missing(),
+            _ => new FastPropertyValue(FastValueKind.Mixed)
+        };
+        view.Show(new("对象", state == "single" ? 1 : 2, [new(spec, data,
+            state == "readonly" ? PnEditPermission.ReadOnly("图层锁定") : PnEditPermission.Writable,
+            state == "ticket" ? Guid.Empty : Guid.NewGuid())], "测试"));
+        if (state == "path") Children<TextBox>(view).First().Text = "Area";
+        if (state == "suspend") view.SuspendEditing();
+        var item = value.ContextMenu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "统一键值"));
+        value.ContextMenu.RaiseEvent(new RoutedEventArgs(ContextMenu.OpenedEvent));
+        Assert.False(((RoutedCommand)item.Command).CanExecute(null, value));
+        Assert.True(ToolTipService.GetShowOnDisabled(item)); Assert.NotEmpty(((TextBlock)((ToolTip)item.ToolTip).Content).Text);
+        int requests = 0; view.UnifyValueRequested += _ => requests++;
+        ((RoutedCommand)item.Command).Execute(null, value); PumpMenuCleanup(); Assert.Equal(0, requests);
+    });
+
+    /// <summary>禁用时 Ctrl+U 也被消费，不因快捷键泄漏执行 CAD 的其他功能。</summary>
+    [Fact]
+    public void DisabledUnifyShortcutIsConsumed() => Sta(() =>
+    {
+        var (view, _, value) = Comment();
+        var key = new KeyEventArgs(Keyboard.PrimaryDevice, new TestSource(), 0, System.Windows.Input.Key.U)
+            { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        var handler = typeof(FastPropertiesView).GetMethod("HandleUnifyShortcut",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.True((bool)handler.Invoke(view, [key, value, ModifierKeys.Control])!); Assert.True(key.Handled);
+        Assert.False((bool)handler.Invoke(view, [key, value, ModifierKeys.None])!);
+    });
+
+    /// <summary>确定仅回填，另一次值格 Enter 才提交；不发路径或刷新事件。</summary>
+    [Fact]
+    public void UnifiedConfirmationCreatesDraftWithoutSubmittingOrRefreshing() => Sta(() =>
+    {
+        var (view, value) = MixedComment(); var requests = new List<PnUnifiedValueRequest>(); var edits = new List<PnEditRequest>();
+        view.UnifyValueRequested += requests.Add; view.EditRequested += edits.Add;
+        int rowEvents = 0; view.RowsChanging += () => rowEvents++; view.RowsCommitted += () => rowEvents++;
+        Focus(value, true); ExecuteUnify(value); PumpMenuCleanup(); var request = Assert.Single(requests);
+        var dialog = new UnifiedValueView("Comment", ["A", "B"], request.Draft, view.Resources);
+        var combo = Children<ComboBox>(dialog).Single(); combo.Text = "统一实际值";
+        var key = new KeyEventArgs(Keyboard.PrimaryDevice, new TestSource(), 0, System.Windows.Input.Key.Enter)
+            { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        dialog.Confirmed += text => { Assert.True(key.Handled); Assert.True(view.TryApplyUnifiedDraft(request, text)); };
+        dialog.RaiseEvent(key); Assert.True(key.Handled); PumpMenuCleanup();
+        Assert.Empty(edits); Assert.Equal(0, rowEvents); Assert.Equal("统一实际值", value.Text);
+        Assert.Contains("尚未提交", ((TextBlock)((ToolTip)value.ToolTip).Content).Text);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal("统一实际值", edits[0].Value); Assert.Equal(request.Token, edits[0].Token);
+    });
+
+    /// <summary>无草稿、明确空草稿和真实文本草稿在请求和窗口初始化中不混淆。</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" 草稿 ")]
+    public void UnifyInitialTextPreservesDraftState(string? draft) => Sta(() =>
+    {
+        var (view, value) = MixedComment(); Focus(value, true);
+        if (draft == "") Key(value, System.Windows.Input.Key.Delete); else if (draft != null) value.Text = draft;
+        var requests = new List<PnUnifiedValueRequest>(); view.UnifyValueRequested += requests.Add;
+        ExecuteUnify(value); PumpMenuCleanup(); var request = Assert.Single(requests); Assert.Equal(draft, request.Draft);
+        var dialog = new UnifiedValueView("Size", ["A", "B"], request.Draft, view.Resources);
+        dialog.PrepareTemplate(); var combo = Children<ComboBox>(dialog).Single();
+        Assert.True(combo.IsEditable); Assert.False(combo.IsTextSearchEnabled); Assert.Equal(-1, combo.SelectedIndex);
+        Assert.Equal(draft ?? "", combo.Text);
+        var editor = Assert.IsType<TextBox>(combo.Template.FindName("PART_EditableTextBox", combo));
+        Assert.Equal(draft ?? "", editor.Text);
+        editor.Text = " 手输新值 "; string? confirmed = null; dialog.Confirmed += text => confirmed = text;
+        Children<System.Windows.Controls.Button>(dialog).Single(b => Equals(b.Content, "确定"))
+            .RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        Assert.Equal(" 手输新值 ", confirmed);
+    });
+
+    /// <summary>取消保持原票据和草稿，不主动刷新；确认空输入也只形成草稿。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UnifyCancelOrEmptyConfirmationNeverWrites(bool acceptEmpty) => Sta(() =>
+    {
+        var (view, value) = MixedComment(); Focus(value, true); value.Text = "原草稿";
+        var requests = new List<PnUnifiedValueRequest>(); view.UnifyValueRequested += requests.Add;
+        var edits = new List<PnEditRequest>(); view.EditRequested += edits.Add;
+        ExecuteUnify(value); PumpMenuCleanup(); var request = Assert.Single(requests);
+        if (acceptEmpty) Assert.True(view.TryApplyUnifiedDraft(request, "")); else view.CompleteUnifiedRequest(request);
+        PumpMenuCleanup(); Assert.Empty(edits); Assert.Equal(acceptEmpty ? "" : "原草稿", value.Text);
+        Focus(value, true); Key(value, System.Windows.Input.Key.Enter);
+        Assert.Single(edits); Assert.Equal(acceptEmpty ? "" : "原草稿", edits[0].Value);
+    });
+
+    /// <summary>旧弹窗请求不得覆盖新输入、Esc、换选、权限、路径、隐藏和行移除后的状态。</summary>
+    [Theory]
+    [InlineData("draft")]
+    [InlineData("escape")]
+    [InlineData("ticket")]
+    [InlineData("readonly")]
+    [InlineData("single")]
+    [InlineData("path")]
+    [InlineData("hide")]
+    [InlineData("remove")]
+    public void StaleUnifiedResultNeverOverwritesCurrentState(string change) => Sta(() =>
+    {
+        var (view, value) = MixedComment(); Focus(value, true);
+        var requests = new List<PnUnifiedValueRequest>(); view.UnifyValueRequested += requests.Add;
+        int writes = 0; view.EditRequested += _ => writes++;
+        ExecuteUnify(value); PumpMenuCleanup(); var request = Assert.Single(requests);
+        if (change == "draft") value.Text = "更晚输入";
+        else if (change == "escape") Key(value, System.Windows.Input.Key.Escape);
+        else if (change == "path") Children<TextBox>(view).First().Text = "Area";
+        else if (change == "hide") view.ClearInputFocus();
+        else if (change == "remove") InvokeRemoval(value.ContextMenu.Items.OfType<MenuItem>().Last());
+        else view.Show(new("更新", change == "single" ? 1 : 2, [new(view.ReadSpecs()[0], new(FastValueKind.Mixed),
+            change == "readonly" ? PnEditPermission.ReadOnly("锁层") : PnEditPermission.Writable,
+            change == "ticket" ? Guid.NewGuid() : request.Token)], "更新"));
+        string current = value.Text;
+        Assert.False(view.TryApplyUnifiedDraft(request, "过期窗口的结果"));
+        view.CompleteUnifiedRequest(request, false); PumpMenuCleanup();
+        Assert.Equal(current, value.Text); Assert.Equal(0, writes);
+        if (change == "draft") { Key(value, System.Windows.Input.Key.Enter); Assert.Equal(1, writes); }
+    });
+
+    /// <summary>相同票据的提示重绘不改变草稿修订，正常请求仍可回填。</summary>
+    [Fact]
+    public void EquivalentSnapshotRepaintDoesNotExpireUnifiedRequest() => Sta(() =>
+    {
+        var (view, value) = MixedComment(); var requests = new List<PnUnifiedValueRequest>(); view.UnifyValueRequested += requests.Add;
+        ExecuteUnify(value); PumpMenuCleanup(); var request = Assert.Single(requests);
+        view.Show(new("刷新显示", 2, [new(view.ReadSpecs()[0], new(FastValueKind.Mixed, Detail: "更新提示"),
+            PnEditPermission.Writable, request.Token)], "只重绘"));
+        Assert.True(view.IsUnifiedRequestCurrent(request)); Assert.True(view.TryApplyUnifiedDraft(request, "新草稿"));
+        Assert.Equal("新草稿", value.Text);
+    });
+
+    /// <summary>右键行不同于活动行时必须固定右键所在的行、属性路径和票据。</summary>
+    [Fact]
+    public void UnifyTargetsRightClickedValueInsteadOfActiveRow() => Sta(() =>
+    {
+        var view = new FastPropertiesView(); view.AppendCatalogProperties(["Comment", "Size"]);
+        var cells = view.ReadSpecs().Select(s => new PnPropertyCell(s, new(FastValueKind.Mixed),
+            PnEditPermission.Writable, Guid.NewGuid())).ToArray(); view.Show(new("多选", 2, cells, "可编辑"));
+        var boxes = Children<TextBox>(view).ToArray(); Focus(boxes[1], true);
+        var requests = new List<PnUnifiedValueRequest>(); view.UnifyValueRequested += requests.Add;
+        ExecuteUnify(boxes[3]); PumpMenuCleanup(); var request = Assert.Single(requests);
+        Assert.Equal(cells[1].Spec.Id, request.RowId); Assert.Equal("TargetObject.Size", request.Path);
+        Assert.Equal(cells[1].EditToken, request.Token);
+    });
+
+    /// <summary>模态 Esc 只取消一次且被消费；确认按键不能从窗口继续传到值格。</summary>
+    [Fact]
+    public void UnifiedDialogEscapeConsumesKeyAndDoesNotConfirm() => Sta(() =>
+    {
+        var (panel, _) = MixedComment(); var dialog = new UnifiedValueView("Size", ["A"], "原草稿", panel.Resources);
+        int confirms = 0, cancels = 0; dialog.Confirmed += _ => confirms++; dialog.Canceled += () => cancels++;
+        var key = new KeyEventArgs(Keyboard.PrimaryDevice, new TestSource(), 0, System.Windows.Input.Key.Escape)
+            { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        dialog.RaiseEvent(key); dialog.RaiseEvent(key);
+        Assert.True(key.Handled); Assert.Equal(1, cancels); Assert.Equal(0, confirms);
+        Assert.Equal("原草稿", Children<ComboBox>(dialog).Single().Text);
+    });
+
+    /// <summary>编辑框及 Popup／选项模板均使用局部主题，正常输入和长项提示不变白。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UnifiedComboThemesCoverEditorPopupAndItems(bool dark) => Sta(() =>
+    {
+        var panel = new FastPropertiesView(); panel.SetTheme(dark);
+        var dialog = new UnifiedValueView("TargetObject.Size", ["长值一", "长值二"], null, panel.Resources);
+        dialog.Measure(new Size(480, 220)); dialog.Arrange(new Rect(0, 0, 480, 220)); dialog.UpdateLayout(); dialog.PrepareTemplate();
+        var combo = Children<ComboBox>(dialog).Single();
+        var editor = Assert.IsType<TextBox>(combo.Template.FindName("PART_EditableTextBox", combo));
+        var popup = Assert.IsType<System.Windows.Controls.Primitives.Popup>(combo.Template.FindName("PART_Popup", combo));
+        var border = Assert.IsType<Border>(popup.Child);
+        Assert.Equal(((SolidColorBrush)panel.Resources["PanelSurface"]).Color, ((SolidColorBrush)border.Background).Color);
+        Assert.Equal(((SolidColorBrush)panel.Resources["PanelForeground"]).Color, ((SolidColorBrush)editor.Foreground).Color);
+        Assert.NotNull(dialog.TryFindResource(typeof(ComboBoxItem))); Assert.Equal(-1, combo.SelectedIndex);
+        panel.SetTheme(!dark);
+        Assert.Equal(((SolidColorBrush)panel.Resources["PanelSurface"]).Color, ((SolidColorBrush)border.Background).Color);
+        Assert.Equal(((SolidColorBrush)panel.Resources["PanelForeground"]).Color, ((SolidColorBrush)editor.Foreground).Color);
+    });
+
+    private static void ExecuteUnify(TextBox value)
+    {
+        var binding = value.InputBindings.OfType<KeyBinding>().Single(x => x.Key == System.Windows.Input.Key.U);
+        ((RoutedCommand)binding.Command).Execute(null, value);
+    }
+
     private static void PumpMenuCleanup() => Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
 
     private static void InvokeRemoval(MenuItem item) => ((RoutedCommand)item.Command).Execute(null, item.CommandTarget);

@@ -29,7 +29,8 @@ internal sealed class FastSelectionController : IDisposable
     private PnObjectProperties? _single;
     private (PnEditRequest Request, EditLease Lease)? _pending;
     private CatalogLease? _catalogPending;
-    private bool _dirty = true, _paused, _inside, _disposed, _writing, _applyingValue;
+    private (PnUnifiedValueRequest Request, EditLease Lease)? _unifyPending;
+    private bool _dirty = true, _paused, _inside, _disposed, _writing, _applyingValue, _unifying;
     // 同步写入事件在下一次完整 Capture 中复核，不把句柄作为身份。
     private long _epoch;
     private string _notice = "";
@@ -44,7 +45,7 @@ internal sealed class FastSelectionController : IDisposable
             AcadApp.DocumentManager.DocumentActivated += DocumentChanged;
             AcadApp.DocumentManager.DocumentToBeDestroyed += DocumentChanged;
             view.RowsChanging += PathsChanging; view.RowsCommitted += PathsCommitted; view.EditRequested += QueueEdit;
-            view.CatalogRequested += QueueCatalog;
+            view.CatalogRequested += QueueCatalog; view.UnifyValueRequested += QueueUnify;
         }
         catch { Dispose(); throw; }
     }
@@ -77,7 +78,7 @@ internal sealed class FastSelectionController : IDisposable
     {
         try
         {
-            if (_writing || _pending != null || !_tickets.TryGetValue(request.Token, out var lease))
+            if (_writing || _unifying || _unifyPending != null || _pending != null || !_tickets.TryGetValue(request.Token, out var lease))
                 throw new InvalidOperationException("编辑已过期或正在提交，请刷新后重试。");
             var expected = lease.Contexts[0];
             if (request.RowId != expected.RowId || request.RowRevision != expected.RowRevision
@@ -93,7 +94,7 @@ internal sealed class FastSelectionController : IDisposable
     {
         try
         {
-            if (_disposed || _writing || _pending != null || _catalogPending != null || _dirty || _batch.HasWork
+            if (_disposed || _writing || _unifying || _unifyPending != null || _pending != null || _catalogPending != null || _dirty || _batch.HasWork
                 || _database == null || _access == null || _single == null || _targets.Length != 1
                 || string.IsNullOrEmpty(_single.TargetKey))
                 throw new InvalidOperationException("请选择一个有效的 Plant 对象，等待读取或提交完成。");
@@ -102,6 +103,83 @@ internal sealed class FastSelectionController : IDisposable
             _view.SetCatalogAvailability(false, "正在检索属性。");
         }
         catch (System.Exception ex) { _view.ShowStatus("未检索：" + FastPropertyAccess.Describe(ex)); }
+    }
+
+    /// <summary>菜单只固定文本请求和已有全量票据，不读取 SDK 或消耗写入许可。</summary>
+    private void QueueUnify(PnUnifiedValueRequest request)
+    {
+        try
+        {
+            if (!_view.IsUnifiedRequestCurrent(request)) { _view.CompleteUnifiedRequest(request, false); return; }
+            if (_disposed || _writing || _unifying || _pending != null || _catalogPending != null || _unifyPending != null
+                || _dirty || _batch.HasWork || !_tickets.TryGetValue(request.Token, out var lease))
+                throw new InvalidOperationException("当前忙碌或编辑票据已失效，请等待读取完成。");
+            var first = lease.Contexts[0];
+            if (lease.Contexts.Count < 2 || first.RowId != request.RowId || first.RowRevision != request.RowRevision || first.Path != request.Path)
+                throw new InvalidOperationException("统一键值请求与当前多选属性票据不一致。");
+            _unifyPending = (request, lease);
+        }
+        catch (System.Exception ex)
+        {
+            _view.CompleteUnifiedRequest(request); _view.ShowStatus("未打开统一键值：" + FastPropertyAccess.Describe(ex));
+        }
+    }
+
+    /// <summary>显示窗口前及确认后短暂锁文档复核全部目标，显示期间不持有锁或事务。</summary>
+    private void VerifyUnifiedContext(PnUnifiedValueRequest request, EditLease edit)
+    {
+        EnsureEdit(edit);
+        if (BatchRunGate.IsRunning || !_tickets.TryGetValue(request.Token, out var active) || !ReferenceEquals(active, edit))
+            throw new InvalidOperationException("批次忙碌或编辑票据已失效。");
+        var document = AcadApp.DocumentManager.MdiActiveDocument!;
+        using (document.LockDocument())
+        {
+            EnsureEdit(edit);
+            var spec = _view.ReadSpecs().First(x => x.Id == request.RowId);
+            var host = new SelectionEditHost(this, edit, document, spec, new FastPropertyAccess(busy: false));
+            string? reason = PnPropertyEditPolicy.ValidateSelection(edit.Contexts, host.Capture());
+            if (reason != null) throw new InvalidOperationException(reason);
+        }
+        EnsureEdit(edit);
+    }
+
+    /// <summary>CAD 主线程模态窗口只回填草稿；有效确认或取消均不主动刷新、消耗票据或写入。</summary>
+    private void ShowUnifiedValue(PnUnifiedValueRequest request, EditLease edit)
+    {
+        _unifying = true;
+        try
+        {
+            if (!_view.IsUnifiedRequestCurrent(request)) return;
+            VerifyUnifiedContext(request, edit);
+            if (!_view.IsUnifiedRequestCurrent(request)) return;
+            var options = PnUnifiedValuePolicy.Options(edit.Contexts.Select(x => x.Original));
+            var window = new UnifiedValueWindow(request.Path[13..], options, request.Draft, _view.Resources);
+            _view.SuspendInputFocus();
+            if (AcadApp.ShowModalWindow(window) != true)
+            {
+                _notice = "已取消统一键值，保留原草稿，未写入对象。";
+                return;
+            }
+            if (!_view.IsUnifiedRequestCurrent(request))
+            {
+                _notice = "未回填：属性或草稿已变化，保留当前状态。";
+                return;
+            }
+            VerifyUnifiedContext(request, edit);
+            _notice = _view.TryApplyUnifiedDraft(request, window.Value)
+                ? "已回填统一键值草稿；返回值格后按 Enter 提交，Esc 撤销。"
+                : "未回填：属性或草稿已变化，保留当前状态。";
+        }
+        catch (System.Exception ex)
+        {
+            _notice = "未回填统一键值：" + FastPropertyAccess.Describe(ex);
+            RequestRefresh();
+        }
+        finally
+        {
+            _unifying = false; _view.CompleteUnifiedRequest(request); _view.ResumeInputFocus();
+            if (!_disposed) _view.ShowStatus(_notice);
+        }
     }
 
     /// <summary>所有者由 CAD 设置，锁与事务在显示模态窗口前释放，取消不更改属性行。</summary>
@@ -178,7 +256,7 @@ internal sealed class FastSelectionController : IDisposable
             {
                 if (_document != null) { Unbind(); RequestRefresh(); _view.SuspendEditing(); }
                 _view.ClearInputFocus();
-                _pending = null; _catalogPending = null; return;
+                _pending = null; _catalogPending = null; _unifyPending = null; return;
             }
             var document = AcadApp.DocumentManager.MdiActiveDocument;
             if (document == null) { Clear("当前没有活动图纸。"); return; }
@@ -190,9 +268,14 @@ internal sealed class FastSelectionController : IDisposable
 
             // 在读锁外固定状态；面板输入本身不会被误判为 CAD 正在运行命令。
             bool busy = PnPropertyPolicy.IsBusy(BatchRunGate.IsRunning, !string.IsNullOrEmpty(document.CommandInProgress),
-                document.Editor.IsQuiescent, _view.HasInputFocus || _catalogPending != null);
+                document.Editor.IsQuiescent, _view.HasInputFocus || _catalogPending != null || _unifyPending != null);
             if (busy)
             {
+                if (_unifyPending is { } unify)
+                {
+                    _unifyPending = null; _view.CompleteUnifiedRequest(unify.Request, false);
+                    _notice = "未统一键值：CAD 或批次忙碌，请空闲后重试。";
+                }
                 if (_catalogPending != null) { _catalogPending = null; _notice = "未检索：CAD 或批次忙碌，请空闲后重试。"; }
                 if (_pending != null) { _pending = null; _notice = "未写入：CAD 或批次忙碌，请空闲后重试。"; _view.ResumeInputFocus(); }
                 if (!_paused)
@@ -206,6 +289,10 @@ internal sealed class FastSelectionController : IDisposable
             if (_pending is { } pending)
             {
                 _pending = null; WritePending(pending.Request, pending.Lease); return;
+            }
+            if (_unifyPending is { } unified)
+            {
+                _unifyPending = null; ShowUnifiedValue(unified.Request, unified.Lease); return;
             }
             if (_catalogPending is { } catalog)
             {
@@ -428,7 +515,7 @@ internal sealed class FastSelectionController : IDisposable
     private void Clear(string message)
     {
         bool changed = _document != null || _dirty;
-        Unbind(); RequestRefresh(); _dirty = false; _pending = null; _catalogPending = null;
+        Unbind(); RequestRefresh(); _dirty = false; _pending = null; _catalogPending = null; _unifyPending = null;
         if (changed) { _view.ClearInputFocus(); _view.SuspendEditing(); _view.Show(PnPropertyPolicy.Empty(_view.ReadSpecs(), "只读 · " + message + Notice())); }
     }
     private void Unbind()
@@ -444,11 +531,11 @@ internal sealed class FastSelectionController : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        _disposed = true; _pending = null; _catalogPending = null;
+        _disposed = true; _pending = null; _catalogPending = null; _unifyPending = null;
         Try(() => AcadApp.Idle -= Idle); Try(() => AcadApp.DocumentManager.DocumentActivated -= DocumentChanged);
         Try(() => AcadApp.DocumentManager.DocumentToBeDestroyed -= DocumentChanged);
         _view.RowsChanging -= PathsChanging; _view.RowsCommitted -= PathsCommitted; _view.EditRequested -= QueueEdit;
-        _view.CatalogRequested -= QueueCatalog;
+        _view.CatalogRequested -= QueueCatalog; _view.UnifyValueRequested -= QueueUnify;
         Unbind(); RequestRefresh();
         try { _view.SuspendEditing(); }
         finally { _view.ClearInputFocus(); }
