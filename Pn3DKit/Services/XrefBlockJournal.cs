@@ -12,6 +12,7 @@ public sealed class XrefBlockJournal : IDisposable
     private readonly string _directory;
     private readonly RunLogFiles _files;
     private readonly TimeProvider _clock;
+    private readonly JournalFlushPolicy _flush;
     private readonly Func<string, Stream> _createNameFile;
     private readonly Func<Guid> _newSourceId;
     private readonly Dictionary<string, NameScan> _scans = new(StringComparer.Ordinal);
@@ -82,6 +83,8 @@ public sealed class XrefBlockJournal : IDisposable
             _anonymous = CsvWriter(_anonymousStream); opened.Add(_anonymous);
             _normal = CsvWriter(_normalStream); opened.Add(_normal);
             _comparison = CsvWriter(_comparisonStream); opened.Add(_comparison);
+            _flush = new(() => { _log.Flush(); _sources.Flush(); _comparison.Flush(); _normal.Flush(); _anonymous.Flush(); },
+                () => JournalFlushPolicy.Persist(_logStream, _sourceStream, _comparisonStream, _normalStream, _anonymousStream), _clock);
             _log.WriteLine("Pn3DKit | XREFBLOCKCHECK | 块名称统计");
             _log.WriteLine("主图：" + drawing);
             _log.WriteLine("开始时间：" + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"));
@@ -347,7 +350,7 @@ public sealed class XrefBlockJournal : IDisposable
                     _log.WriteLine("比较" + group.Key + "：" + group.Count());
             }
             _log.WriteLine("dwg计数按不同来源去重；独立匿名根和单来源名称不做内容比较。");
-            Flush();
+            _flush.Record(durable: true);
         }, "输出结束汇总");
     }
 
@@ -380,12 +383,7 @@ public sealed class XrefBlockJournal : IDisposable
     }
 
     /// <summary>即时刷新主 LOG 和来源索引，不触碰名称清单的阈值定时器。</summary>
-    private void Flush()
-    {
-        _log.Flush(); _sources.Flush();
-        foreach (var stream in new[] { _logStream, _sourceStream })
-            if (stream is FileStream file) file.Flush(true); else stream.Flush();
-    }
+    private void Flush() => _flush.Record();
     /// <summary>关闭所有名称定时器、文本编码器及文件流；任何失败也继续释放其余文件。</summary>
     public void Dispose()
     {
@@ -395,6 +393,7 @@ public sealed class XrefBlockJournal : IDisposable
         foreach (var scan in _scans.Values.Where(s => !s.Finished).ToArray())
             try { EndNames(scan, "已停止", "主报告关闭前终止未结束的名称扫描。"); }
             catch (Exception ex) { errors.Add(ex); }
+        try { _flush.Finish(); } catch (Exception ex) { errors.Add(ex); }
         foreach (var resource in new IDisposable[] { _comparison, _normal, _anonymous, _sources, _log, _comparisonStream, _normalStream, _anonymousStream, _sourceStream, _logStream })
             try { resource.Dispose(); } catch (Exception ex) { errors.Add(ex); }
         if (errors.Count != 0)

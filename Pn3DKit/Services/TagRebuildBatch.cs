@@ -37,8 +37,7 @@ public static class TagRebuildBatch
                 var owners = host.FindOwners(item);
                 if (owners.Count != 0)
                 { Record(new(item, TagRebuildAction.Conflict, "写入前发现占用：" + string.Join("、", owners))); continue; }
-                journal.Message("准备写入：句柄 " + item.Check.Subject.Handle + "；"
-                    + item.Check.Subject.ExistingTag + " → " + item.Check.ExpectedTag);
+                journal.BeforeWrite(item);
                 host.EnsureContext();
                 attempted = true;
                 TagRebuildRecord result;

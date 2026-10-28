@@ -36,7 +36,7 @@ public static class ProjectTagDataBatch
                 if (changed != null) { Append(new(item, TagRebuildAction.Skipped, changed)); continue; }
                 var owners = host.FindOwners(item);
                 if (owners.Count != 0) { Append(new(item, TagRebuildAction.Conflict, "写入前占用：" + string.Join("、", owners))); continue; }
-                journal.Message("准备提交项目行：" + item.Key + "；" + item.Check.Subject.ExistingTag + " → " + item.Check.ExpectedTag);
+                journal.BeforeWrite(item);
                 host.EnsureContext();
                 try
                 {

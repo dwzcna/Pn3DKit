@@ -177,6 +177,7 @@ public sealed class TagCatalogTests
     /// <summary>接收离线写入历史。</summary>
     private sealed class MemoryJournal : ITagRebuildJournal
     {
+        public void BeforeWrite(TagRebuildCandidate item) => Message(TagWriteRecovery.Format(item));
         public void Append(TagRebuildRecord record) { }
         public void Message(string message) { }
     }

@@ -20,6 +20,12 @@ public sealed class ProjectTagTests : IDisposable
         TagRebuildState.Ready, "");
     private sealed class Journal : ITagRebuildJournal
     {
+        internal bool FailBeforeWrite;
+        public void BeforeWrite(TagRebuildCandidate item)
+        {
+            if (FailBeforeWrite) throw new IOException("写前记录持久化失败");
+            Message(TagWriteRecovery.Format(item));
+        }
         internal List<TagRebuildRecord> Records = [];
         internal List<string> Messages = [];
         internal bool Fail;
@@ -99,6 +105,17 @@ public sealed class ProjectTagTests : IDisposable
     [Fact] public void PendingBaselineStops()
     { var h = new Data { Pending = true }; var r = ProjectTagDataBatch.Run([Plan(1), Plan(2)], h, new Journal(), (_, _) => { });
       Assert.Equal(0, h.Writes); Assert.All(r.Records, x => Assert.Equal(TagRebuildAction.Unexecuted, x.Action)); }
+    /// <summary>专用写前记录持久化失败时，项目提交接口不得执行。</summary>
+    [Fact]
+    public void DurableBeforeWriteFailureStopsData()
+    {
+        var host = new Data();
+        var result = ProjectTagDataBatch.Run([Plan(1), Plan(2)], host,
+            new Journal { FailBeforeWrite = true }, (_, _) => {});
+        Assert.Equal(0, host.Writes); Assert.NotNull(result.StopReason);
+        Assert.All(result.Records, x => Assert.Equal(TagRebuildAction.Unexecuted, x.Action));
+    }
+
     /// <summary>数据模式每行提交回读，接口不提供 DWG 操作。</summary>
     [Fact] public void DataWritesAll()
     { var h = new Data(); var r = ProjectTagDataBatch.Run([Plan(1), Plan(2)], h, new Journal(), (_, _) => { });

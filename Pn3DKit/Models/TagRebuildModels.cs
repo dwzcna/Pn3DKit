@@ -66,6 +66,8 @@ public interface ITagRebuildHost
 /// <summary>记录预检和写入事件；写入失败向调用方传播以停止后续修改。</summary>
 public interface ITagRebuildJournal
 {
+    /// <summary>实际写入前记录完整恢复信息并强制落盘；失败时禁止写入。</summary>
+    void BeforeWrite(TagRebuildCandidate item);
     /// <summary>追加一条对象历史并立即刷新。</summary>
     void Append(TagRebuildRecord record);
     /// <summary>追加运行及生命周期信息并立即刷新。</summary>

@@ -363,6 +363,17 @@ public sealed class TagRebuildTests
         Assert.False(result.SafeToSave);
     }
 
+    /// <summary>普通日志成功而专用写前记录失败时，同样零修改并结束撤销组。</summary>
+    [Fact]
+    public void DurableBeforeWriteFailureStops()
+    {
+        var host = new Host();
+        var result = TagRebuildBatch.Run(Free(Item()), host, new Journal { FailBeforeWrite = true }, (_, _) => {});
+        Assert.DoesNotContain(host.Events, x => x.StartsWith("write:"));
+        Assert.Contains("end", host.Events);
+        Assert.False(result.SafeToSave); Assert.NotNull(result.StopReason);
+    }
+
     /// <summary>END 失败时已更新记录仍保留，禁止后续自动保存。</summary>
     [Fact]
     public void EndFailureDisablesSave()
@@ -516,6 +527,12 @@ public sealed class TagRebuildTests
     /// <summary>离线日志捕获追加历史，可模拟磁盘写入故障。</summary>
     private sealed class Journal : ITagRebuildJournal
     {
+        internal bool FailBeforeWrite;
+        public void BeforeWrite(TagRebuildCandidate item)
+        {
+            if (FailBeforeWrite) throw new IOException("写前记录持久化失败");
+            Message(TagWriteRecovery.Format(item));
+        }
         internal readonly List<TagRebuildRecord> Records = [];
         internal bool FailAppend, FailMessage;
         public void Append(TagRebuildRecord record)

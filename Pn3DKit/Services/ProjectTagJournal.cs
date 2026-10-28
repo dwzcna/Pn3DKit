@@ -8,6 +8,8 @@ namespace Pn3DKit.Services;
 public sealed class ProjectTagJournal : ITagRebuildJournal, IDisposable
 {
     private readonly RunLogFiles _files;
+    private readonly JournalFlushPolicy _flush;
+    private bool _disposed;
     private readonly FileStream _logFile, _csvFile;
     private readonly StreamWriter _log, _csv;
     /// <summary>文本日志完整路径。</summary>
@@ -29,6 +31,7 @@ public sealed class ProjectTagJournal : ITagRebuildJournal, IDisposable
         catch { _logFile.Dispose(); throw; }
         _log = new(_logFile, new UTF8Encoding(false), 4096, true);
         _csv = new(_csvFile, new UTF8Encoding(true), 4096, true) { NewLine = "\r\n" };
+        _flush = new(() => { _log.Flush(); _csv.Flush(); }, () => JournalFlushPolicy.Persist(_logFile, _csvFile));
         try
         {
             _log.WriteLine("Pn3DKit | " + (rebuild ? "REBUILDPROJECTPNTAGBYCLASS" : "CHECKPROJECTPNTAGBYCLASS"));
@@ -75,15 +78,23 @@ public sealed class ProjectTagJournal : ITagRebuildJournal, IDisposable
         Flush();
     }
     /// <inheritdoc />
+    public void BeforeWrite(TagRebuildCandidate item)
+    {
+        _log.WriteLine(TagWriteRecovery.Format(item));
+        _flush.Record(durable: true);
+    }
+
+    /// <inheritdoc />
     public void Message(string message) { _log.WriteLine(message); Flush(); }
     /// <summary>记录结束时间和真实批次状态。</summary>
-    public void Complete(string status) => Message("结束时间：" + DateTimeOffset.Now.ToString("O") + "；批次状态：" + status);
-    /// <summary>每条记录同步文本和文件流。</summary>
-    private void Flush() { _log.Flush(); _csv.Flush(); _logFile.Flush(true); _csvFile.Flush(true); }
+    public void Complete(string status) { Message("结束时间：" + DateTimeOffset.Now.ToString("O") + "；批次状态：" + status); _flush.Finish(); }
+    /// <summary>普通记录刷新文件缓存，按五十条或一秒检查点强制持久化。</summary>
+    private void Flush() => _flush.Record();
+
     /// <summary>释放所有流，任何释放错误不阻止其他流清理。</summary>
     public void Dispose()
     {
-        try { _csv.Dispose(); }
-        finally { try { _log.Dispose(); } finally { try { _csvFile.Dispose(); } finally { _logFile.Dispose(); } } }
+        if (_disposed) return; _disposed = true;
+        JournalFlushPolicy.Close(_flush.Finish, _csv, _log, _csvFile, _logFile);
     }
 }
