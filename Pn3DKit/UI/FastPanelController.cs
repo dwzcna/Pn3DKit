@@ -13,7 +13,7 @@ internal static class FastPanelController
     private static bool _themeHooked;
     private static FastSelectionController? _selection;
 
-    /// <summary>在 CAD 主线程打开或激活已有面板，默认右侧停靠，关闭后复用实例。</summary>
+    /// <summary>在 CAD 主线程首次创建浮动面板；关闭后复用实例并保留本会话手动位置。</summary>
     internal static void Show()
     {
         if (_palette == null)
@@ -35,7 +35,8 @@ internal static class FastPanelController
                 _themeHooked = true;
                 UpdateTheme();
                 palette.Visible = true;
-                palette.Dock = DockSides.Right;
+                // 首次显示后解除宿主恢复的旧停靠状态，复用分支不再重设位置。
+                palette.Dock = DockSides.None;
             }
             catch
             {
