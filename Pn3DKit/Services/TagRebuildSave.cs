@@ -5,6 +5,10 @@ namespace Pn3DKit.Services;
 /// <summary>保存必须由用户明确确认，并在命令和撤销组全部收尾后执行。</summary>
 public static class TagRebuildSave
 {
+    /// <summary>仅正常完成且状态安全的实际写入允许继续询问保存；中断保留修改及日志。</summary>
+    public static bool CanPrompt(TagRebuildBatchResult result) =>
+        result.Attempted && result.SafeToSave && result.StopReason == null;
+
     /// <summary>复用宿主的 QSAVE 完成流程，保存后仍有修改时报告失败；调用方继续持有批次租约。</summary>
     public static async Task<bool> RunAsync(bool confirmed, bool allowed, Func<Task> save,
         Func<Task<bool>> isModified, ITagRebuildJournal journal)

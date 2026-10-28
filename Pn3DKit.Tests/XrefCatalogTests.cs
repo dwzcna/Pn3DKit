@@ -57,6 +57,25 @@ public sealed class XrefCatalogTests : IDisposable
         { Assert.Equal(FileOpenMode.OpenForReadAndAllShare, mode.Mode); Assert.Equal("", mode.Password); });
     }
 
+    /// <summary>旧绝对路径失效后仍按宿主目录定位同名来源，并记录路径映射。</summary>
+    [Fact]
+    public void MissingAbsolutePathUsesHostSearch()
+    {
+        var main = Source("A.dwg"); var child = Source("moved.dwg"); child.Block("Valve");
+        string oldPath = Path.Combine(_root, "old", "moved.dwg");
+        main.Reference("Moved", null, oldPath);
+        using (var catalog = new XrefBlockCadCatalog(main, main.Filename, () => {}, _journal))
+        {
+            catalog.Discover();
+            Assert.True(catalog.ScopeComplete);
+            Assert.Equal("Valve", Assert.Single(catalog.ReadNames().Entries).Name);
+        }
+        Assert.Equal(1, Database.Reads[child.Filename]);
+        _journal.Dispose();
+        Assert.Contains(oldPath, File.ReadAllText(_journal.LogPath));
+        Assert.Contains(child.Filename, File.ReadAllText(_journal.LogPath));
+    }
+
     /// <summary>已加载外参使用宿主当前数据库，不重新读取磁盘文件。</summary>
     [Fact]
     public void LoadedSourceUsesHostData()

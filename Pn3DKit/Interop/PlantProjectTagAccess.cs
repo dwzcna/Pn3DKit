@@ -15,13 +15,15 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
     private readonly Dictionary<string, List<string>> _tags = new(StringComparer.OrdinalIgnoreCase);
     private readonly int _thread = Environment.CurrentManagedThreadId;
     private bool _complete;
+    private readonly List<string> _indexErrors = [];
+    private readonly Action<string>? _reportIndexIssue;
     private readonly ScopedContextGuard _guard;
     internal IEnumerable<PlantTagTarget> Targets => _targets.Values;
 
     /// <summary>固定预检行与全部图纸关联；缓存完整项目占用，包括无格式及未选择对象。</summary>
-    internal PlantProjectTagAccess(PlantTagScan scan, Action guard)
+    internal PlantProjectTagAccess(PlantTagScan scan, Action guard, Action<string>? reportIndexIssue = null)
     {
-        _scan = scan; _guard = new ScopedContextGuard(guard);
+        _scan = scan; _guard = new ScopedContextGuard(guard); _reportIndexIssue = reportIndexIssue;
         _targets = scan.Targets.ToDictionary(x => x.Key);
         _associations = _targets.ToDictionary(x => x.Key, x => Associations(x.Value));
         RefreshIndex();
@@ -51,19 +53,22 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
     /// <summary>全项目表索引不依赖所选类别、格式或图形是否已打开；读不全时禁止回退写入。</summary>
     internal void RefreshIndex()
     {
-        EnsureContext(); _tags.Clear(); _complete = _scan.Warnings.Count == 0;
+        EnsureContext(); _tags.Clear(); _indexErrors.Clear(); _complete = _scan.Warnings.Count == 0;
         foreach (var part in _targets.Values.Select(x => x.Context).DistinctBy(x => x.PartName))
         {
+            string tableName = "(数据库)", rowId = "(未定位)";
             try
             {
                 var db = part.Links.GetPnPDatabase();
                 var seen = new HashSet<int>();
                 foreach (PnPTable table in db.Tables)
                 {
+                    tableName = table.Name; rowId = "(枚举行)";
                     if (!table.Columns.Contains("Tag")) continue;
                     foreach (PnPRow row in table.Select())
                     {
                         EnsureContext();
+                        rowId = Convert.ToString(row["PnPID"]) ?? "(null)";
                         int id = Convert.ToInt32(row["PnPID"]);
                         if (!seen.Add(id)) continue;
                         var context = part with { RowId = id, ClassName = row.ClassName };
@@ -76,7 +81,13 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
                 }
             }
             catch (OperationCanceledException) { throw; }
-            catch (System.Exception) { _complete = false; }
+            catch (System.Exception ex)
+            {
+                _complete = false;
+                string detail = $"项目索引读取失败：部分 {part.PartName}；表 {tableName}；行 {rowId}；{Error(ex)}";
+                _indexErrors.Add(detail);
+                _reportIndexIssue?.Invoke(detail);
+            }
         }
     }
 
@@ -167,7 +178,7 @@ internal sealed class PlantProjectTagAccess : IProjectTagDataHost
                 int row = c.Links.FindRowByTag(item.Registry, item.CandidateTag);
                 return row >= 0 && row != c.RowId ? [c.PartName + ":" + row] : [];
             }
-            if (!_complete) throw new InvalidOperationException("完整项目索引不可用。");
+            if (!_complete) throw new InvalidOperationException("完整项目索引不可用。" + string.Join("；", _indexErrors));
             return _tags.TryGetValue(c.PartName + "\n" + item.Check.ExpectedTag, out var owners)
                 ? owners.Where(x => x != item.Key).ToArray() : [];
         }

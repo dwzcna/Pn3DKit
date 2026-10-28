@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.40 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.40
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.41 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.41
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.40 -OutputDirectory artifacts/release/0.1.40
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.41 -OutputDirectory artifacts/release/0.1.41
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源代码，不加载 Autodesk；SDK 替身仅验证来源与生命周期。build/CadVisualPrototype、CadVisualHost、CadVisualProbe 是独立原生验证项目，不加入产品解决方案或单 DLL 载荷；使用授权目录及实例，不调用 Computer Use、不更改 CAD 安全设置。
@@ -90,11 +90,11 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.40/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.41/。
 
 ## 当前实现与验收
 
-0.1.40 在 PNDWGEXPORT 入口临时关闭 PLANTDWGCHECKERAUTOCHECK 并回读确认，安全收尾后恢复原值；保留开始前的一次保存授权，未知原生状态不恢复，恢复失败保留日志并单独报告。验证、元数据与候选见 Changlog.md 和 artifacts/validation/0.1.40/；实际 Plant 提示及崩溃复现待实机复测。PNFASTPANEL 默认浮动、属性行移动、统一键值及草稿行为继续保持。
+0.1.41 修复重建中断后继续询问保存、失效绝对外参路径不搜索、绘制清理异常覆盖及项目索引错误丢失原因。0.1.40 导出自动检查保护继续保持。实际日志及候选见 Changlog.md 和 artifacts/validation/0.1.41/；SDK 与 CAD 交互待专用副本复测。
 
 已完成：0.1.3 图纸身份修复已独立提交；0.1.4 新增 REBUILDPNTAGBYCLASS。BatchRunGate 覆盖导出、批量检查、重建及异步保存；TagRebuildPolicy 负责预检分类、注册键重号及占用链冲突；TagRebuildBatch 负责单撤销组和逐对象回读；TagRebuildJournal 保存追加历史。SDK 适配位于 PlantTagRebuildAccess，只写 PnId.Tag，支持 SLINE 和管线组；PlantTagCatalogAccess 批量读取 PnPRow.ClassName 并缓存类别、格式和成员关联。
 
@@ -104,7 +104,7 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 
 0.1.29 已完成的 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
 
-未完成：PNDWGEXPORT 的真实 Plant 自动检查提示、保存弹窗和崩溃复现，PNFASTPANEL 的首次浮动、手动停靠后重开、行移动、Alt 方向键、模态所有者、Ctrl+U、输入法、焦点、Enter／Esc 与 PICKFIRST，以及项目显示名的实机对照仍待复测。本轮不操作用户图纸。外参视觉边界继续保持未验证保护。0.1.36 已正式发布并回下载核验；0.1.37～0.1.39 已分别本地提交，0.1.40 按确认计划验证后本地提交，不推送、不创建 Release。
+未完成：PNDWGEXPORT 的真实 Plant 自动检查提示、保存弹窗和崩溃复现，PNFASTPANEL 的首次浮动、手动停靠后重开、行移动、Alt 方向键、模态所有者、Ctrl+U、输入法、焦点、Enter／Esc 与 PICKFIRST，以及项目显示名的实机对照仍待复测。本轮不操作用户图纸。外参视觉边界继续保持未验证保护。本轮按 0.1.41–0.1.47 顺序逐版验证与本地提交，全部完成及必要 CAD 验收通过后统一推送并发布 v0.1.47。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 

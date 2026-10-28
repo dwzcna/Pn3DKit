@@ -88,7 +88,7 @@ public sealed class ProjectTagCommands
                     status = "检查完成";
                     return null;
                 }
-                var access = new PlantProjectTagAccess(scan, Ensure);
+                var access = new PlantProjectTagAccess(scan, Ensure, detail => { journal.Message(detail); Write(detail); });
                 foreach (var target in targets)
                 {
                     Ensure();

@@ -352,21 +352,38 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     }
 
     /// <summary>先使用宿主的搜索规则，再按所属图纸目录解析；不依赖进程当前目录猜测相对路径。</summary>
-    private static string Resolve(string path, Database owner)
+    private string Resolve(string path, Database owner)
     {
         if (string.IsNullOrWhiteSpace(path)) throw new FileNotFoundException("外参未提供源文件路径。");
-        if (Path.IsPathFullyQualified(path)) return Canonical(path);
-        try
+        bool absolute = Path.IsPathFullyQualified(path);
+        if (absolute && (File.Exists(path) || _live.ContainsKey(Canonical(path)))) return Canonical(path);
+        var errors = new List<string>();
+        foreach (string input in (absolute ? new[] { path, Path.GetFileName(path) } : new[] { path }).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            string found = HostApplicationServices.Current.FindFile(path, owner, FindFileHint.XRefDrawing);
-            if (!string.IsNullOrWhiteSpace(found)) return Canonical(found);
+            try
+            {
+                string found = HostApplicationServices.Current.FindFile(input, owner, FindFileHint.XRefDrawing);
+                if (!string.IsNullOrWhiteSpace(found) && File.Exists(found))
+                {
+                    string resolved = Canonical(found);
+                    _journal.Notice("外参路径解析：原路径 " + path + "；解析路径 " + resolved);
+                    return resolved;
+                }
+            }
+            catch (CadException ex) when (ex.ErrorStatus != ErrorStatus.UserBreak) { errors.Add(Detail(ex)); }
         }
-        catch (CadException ex) when (ex.ErrorStatus != ErrorStatus.UserBreak) { /* 继续按所属图纸位置核对。 */ }
-        if (string.IsNullOrWhiteSpace(owner.Filename))
-            throw new FileNotFoundException("所属图纸未保存，无法可靠解析相对外参路径：" + path);
-        string candidate = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(owner.Filename)!, path));
-        if (!File.Exists(candidate)) throw new FileNotFoundException("外参源文件缺失：" + candidate, candidate);
-        return candidate;
+        if (!string.IsNullOrWhiteSpace(owner.Filename))
+        {
+            string candidate = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(owner.Filename)!, absolute ? Path.GetFileName(path) : path));
+            if (File.Exists(candidate))
+            {
+                _journal.Notice("外参路径解析：原路径 " + path + "；解析路径 " + candidate);
+                return candidate;
+            }
+            errors.Add("所属图纸目录候选：" + candidate);
+        }
+        else errors.Add("所属图纸未保存，无法解析相对路径");
+        throw new FileNotFoundException("外参源文件无法定位：" + path + "；" + string.Join("；", errors), path);
     }
 
     /// <summary>旁路懒读取允许其他程序写文件，因此在读取前后核对文件状态。</summary>

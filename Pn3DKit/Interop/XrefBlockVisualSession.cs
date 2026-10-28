@@ -50,71 +50,76 @@ internal sealed class XrefBlockVisualSession : IDisposable
     /// <summary>每组先准备全部可靠范围，再采用公共视窗串行绘制；yield 后的像素由离线层立即压缩。</summary>
     internal IEnumerable<XrefVisualCapture> Capture(XrefBlockCandidate candidate)
     {
-        Check();
         var prepared = new List<(XrefBlockNameEntry Entry, ObjectId Target, XrefBlockVisualPreparation? Scene, string? Problem)>();
-        try
-        {
-            foreach (var entry in candidate.Entries.OrderBy(e => e.Source.DwgNo))
-            {
-                Check(); _stage?.Invoke("正在对比块 " + candidate.Name + "：准备来源 " + entry.Source.DwgNo + " " + Path.GetFileName(entry.Source.Drawing));
-                ObjectId target = ObjectId.Null; XrefBlockVisualPreparation? scene = null; string? problem = null;
-                try
-                {
-                    var located = _catalog.LocateVisual(entry); target = located.Definition;
-                    scene = new(located.Database, target, _defaultWeight, Check);
-                    _catalog.VerifyVisual(entry, target);
-                    problem = scene.Problem;
-                }
-                catch (System.Exception ex) when (Ordinary(ex)) { problem = XrefBlockCadCatalog.Detail(ex); }
-                catch
-                {
-                    scene?.Dispose();
-                    throw;
-                }
-                prepared.Add((entry, target, scene, problem));
-            }
-            var reliable = prepared.Where(p => p.Scene != null && p.Problem == null).ToArray();
-            VisualFrame? frame = null; string? frameProblem = null;
-            try { frame = BlockVisualComparison.Frame(reliable.Where(p => p.Scene!.Bounds != null).Select(p => p.Scene!.Bounds!.Value)); }
-            catch (ArgumentException ex) { frameProblem = ex.Message; }
-            var weights = reliable.SelectMany(p => p.Scene!.Weights).Distinct().OrderBy(w => w).ToArray();
-            var palette = weights.Select((w, i) => (Weight: w, Color: (uint)((i + 1) * 0x9E3779) & 0xFFFFFF))
-                .ToDictionary(p => p.Weight, p => p.Color);
-            foreach (var item in prepared)
-            {
-                Check();
-                if (item.Scene == null || item.Problem != null || frame == null)
-                { yield return new(item.Entry, null, item.Problem ?? frameProblem ?? "无法准备候选来源。"); continue; }
-                _catalog.VerifyVisual(item.Entry, item.Target);
-                _stage?.Invoke("正在对比块 " + candidate.Name + "：绘制来源 " + item.Entry.Source.DwgNo + "（公共视窗／双背景）");
-                VisualSample? sample = null; string? problem = null;
-                try
-                {
-                    EnsureDevice();
-                    var light = Draw(item.Scene, frame, GColor.White);
-                    var dark = Draw(item.Scene, frame, GColor.FromArgb(24, 32, 40));
-                    if (item.Scene.HasVisibleContent && !HasInk(light, GColor.White) && !HasInk(dark, GColor.FromArgb(24, 32, 40)))
-                        throw new InvalidOperationException("非空内容意外得到双背景空白图，不能验证。");
-                    byte[]? code = null;
-                    if (weights.Length > 1 && item.Scene.Weights.Length > 1)
-                    {
-                        item.Scene.EncodeWeights(palette);
-                        code = Draw(item.Scene, frame, GColor.Black);
-                    }
-                    sample = new(item.Entry.Source.DwgNo, frame, light, dark, item.Scene.Colors, item.Scene.Weights,
-                        true, true, code, true, null);
-                }
-                catch (System.Exception ex) when (Ordinary(ex)) { problem = XrefBlockCadCatalog.Detail(ex); }
-                Check(); _catalog.VerifyVisual(item.Entry, item.Target);
-                yield return new(item.Entry, sample, problem);
-            }
-        }
-        finally
+        return XrefVisualCleanup.Iterate(CaptureCore(candidate, prepared), () =>
         {
             var errors = new List<System.Exception>();
             foreach (var item in prepared.AsEnumerable().Reverse())
                 try { item.Scene?.Dispose(); } catch (System.Exception ex) { errors.Add(ex); }
-            if (errors.Count > 0) throw new XrefVisualFatalException("候选来源资源释放失败，停止后续绘制。", new AggregateException(errors));
+            if (errors.Count > 0) throw new AggregateException(errors);
+        }, "候选来源资源释放失败，停止后续绘制。");
+    }
+
+    /// <summary>惰性准备与绘制；外层包装器负责候选资源收尾及异常合并。</summary>
+    private IEnumerable<XrefVisualCapture> CaptureCore(XrefBlockCandidate candidate,
+        List<(XrefBlockNameEntry Entry, ObjectId Target, XrefBlockVisualPreparation? Scene, string? Problem)> prepared)
+    {
+        Check();
+        foreach (var entry in candidate.Entries.OrderBy(e => e.Source.DwgNo))
+        {
+            Check(); _stage?.Invoke("正在对比块 " + candidate.Name + "：准备来源 " + entry.Source.DwgNo + " " + Path.GetFileName(entry.Source.Drawing));
+            ObjectId target = ObjectId.Null; XrefBlockVisualPreparation? scene = null; string? problem = null;
+            try
+            {
+                var located = _catalog.LocateVisual(entry); target = located.Definition;
+                scene = new(located.Database, target, _defaultWeight, Check);
+                _catalog.VerifyVisual(entry, target);
+                problem = scene.Problem;
+            }
+            catch (System.Exception ex) when (Ordinary(ex)) { problem = XrefBlockCadCatalog.Detail(ex); }
+            catch (System.Exception ex)
+            {
+                try { scene?.Dispose(); }
+                catch (System.Exception cleanup)
+                { throw new XrefVisualFatalException("候选准备及释放均失败。", new AggregateException(ex, cleanup)); }
+                throw;
+            }
+            prepared.Add((entry, target, scene, problem));
+        }
+        var reliable = prepared.Where(p => p.Scene != null && p.Problem == null).ToArray();
+        VisualFrame? frame = null; string? frameProblem = null;
+        try { frame = BlockVisualComparison.Frame(reliable.Where(p => p.Scene!.Bounds != null).Select(p => p.Scene!.Bounds!.Value)); }
+        catch (ArgumentException ex) { frameProblem = ex.Message; }
+        var weights = reliable.SelectMany(p => p.Scene!.Weights).Distinct().OrderBy(w => w).ToArray();
+        var palette = weights.Select((w, i) => (Weight: w, Color: (uint)((i + 1) * 0x9E3779) & 0xFFFFFF))
+            .ToDictionary(p => p.Weight, p => p.Color);
+        foreach (var item in prepared)
+        {
+            Check();
+            if (item.Scene == null || item.Problem != null || frame == null)
+            { yield return new(item.Entry, null, item.Problem ?? frameProblem ?? "无法准备候选来源。"); continue; }
+            _catalog.VerifyVisual(item.Entry, item.Target);
+            _stage?.Invoke("正在对比块 " + candidate.Name + "：绘制来源 " + item.Entry.Source.DwgNo + "（公共视窗／双背景）");
+            VisualSample? sample = null; string? problem = null;
+            try
+            {
+                EnsureDevice();
+                var light = Draw(item.Scene, frame, GColor.White);
+                var dark = Draw(item.Scene, frame, GColor.FromArgb(24, 32, 40));
+                if (item.Scene.HasVisibleContent && !HasInk(light, GColor.White) && !HasInk(dark, GColor.FromArgb(24, 32, 40)))
+                    throw new InvalidOperationException("非空内容意外得到双背景空白图，不能验证。");
+                byte[]? code = null;
+                if (weights.Length > 1 && item.Scene.Weights.Length > 1)
+                {
+                    item.Scene.EncodeWeights(palette);
+                    code = Draw(item.Scene, frame, GColor.Black);
+                }
+                sample = new(item.Entry.Source.DwgNo, frame, light, dark, item.Scene.Colors, item.Scene.Weights,
+                    true, true, code, true, null);
+            }
+            catch (System.Exception ex) when (Ordinary(ex)) { problem = XrefBlockCadCatalog.Detail(ex); }
+            Check(); _catalog.VerifyVisual(item.Entry, item.Target);
+            yield return new(item.Entry, sample, problem);
         }
     }
 
@@ -150,6 +155,7 @@ internal sealed class XrefBlockVisualSession : IDisposable
         Check();
         var previous = HostApplicationServices.WorkingDatabase;
         Model? model = null;
+        System.Exception? failure = null;
         try
         {
             HostApplicationServices.WorkingDatabase = scene.Database;
@@ -203,6 +209,7 @@ internal sealed class XrefBlockVisualSession : IDisposable
             }
             throw new XrefVisualFatalException("三轮同步读回仍未稳定，不能确认离屏绘制完成。");
         }
+        catch (System.Exception ex) { failure = ex; throw; }
         finally
         {
             var errors = new List<System.Exception>();
@@ -211,7 +218,7 @@ internal sealed class XrefBlockVisualSession : IDisposable
             try { _view?.Dispose(); _view = null; } catch (System.Exception ex) { errors.Add(ex); }
             try { model?.Dispose(); } catch (System.Exception ex) { errors.Add(ex); }
             try { HostApplicationServices.WorkingDatabase = previous; } catch (System.Exception ex) { errors.Add(ex); }
-            if (errors.Count > 0) throw new XrefVisualFatalException("释放离屏模型、清理视图或恢复 WorkingDatabase 失败。", new AggregateException(errors));
+            XrefVisualCleanup.ThrowIfFailed(failure, errors, "释放离屏模型、清理视图或恢复 WorkingDatabase 失败。");
         }
     }
 

@@ -24,11 +24,24 @@ public static class XrefBlockVisualBatch
     public static XrefBlockReportResult Group(XrefBlockCandidate candidate, IEnumerable<XrefVisualCapture> captures,
         Func<bool> scopeComplete, Action ensure, Action<VisualDifference>? difference = null)
     {
+        IEnumerator<XrefVisualCapture>? iterator = null;
+        return XrefVisualCleanup.Run(() =>
+        {
+            iterator = captures.GetEnumerator();
+            return GroupCore(candidate, iterator, scopeComplete, ensure, difference);
+        }, () => iterator?.Dispose(), "消费绘制结果及释放候选资源时失败。");
+    }
+
+    /// <summary>不自行关闭迭代器，交由调用方合并消费异常和释放异常。</summary>
+    private static XrefBlockReportResult GroupCore(XrefBlockCandidate candidate, IEnumerator<XrefVisualCapture> captures,
+        Func<bool> scopeComplete, Action ensure, Action<VisualDifference>? difference)
+    {
         var groups = new List<(CompressedVisualSample Sample, List<XrefBlockNameEntry> Entries)>();
         var problems = new List<string>(); var differences = new List<string>();
         var received = new HashSet<int>();
-        foreach (var capture in captures)
+        while (captures.MoveNext())
         {
+            var capture = captures.Current;
             ensure(); var entry = capture.Entry;
             if (!candidate.Entries.Any(e => e.Source.DwgNo == entry.Source.DwgNo && e.Source.Key == entry.Source.Key)
                 || !received.Add(entry.Source.DwgNo))

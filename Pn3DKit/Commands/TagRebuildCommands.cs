@@ -144,7 +144,7 @@ public sealed class TagRebuildCommands
                     Write(status);
                     foreach (var group in final.GroupBy(x => x.Item.Check.Subject.ClassName))
                         Write(group.Key + "：" + TagRebuildPolicy.Summary(group));
-                    if (!result.Attempted || !result.SafeToSave) return false;
+                    if (!TagRebuildSave.CanPrompt(result)) return false;
                     access.EnsureStable();
                     Write("QSAVE 会保存本图所有修改，包括重建前的已有修改。选择否将保留当前未保存状态。");
                     bool confirmed = Confirm(document.Editor, "重建完成，保存图纸？", access.EnsureStable);
