@@ -29,6 +29,7 @@ public sealed class BatchExportCommands
         }
         var files = new RunLogFiles();
         bool issues = true;
+        ExportAutoCheckScope? autoCheck = null;
         try
         {
             if (AcadApp.DocumentManager.MdiActiveDocument == null)
@@ -36,6 +37,10 @@ public sealed class BatchExportCommands
                 Write("请先打开一张图纸，再执行 PNDWGEXPORT。");
                 return;
             }
+            autoCheck = new ExportAutoCheckScope(
+                () => AcadApp.GetSystemVariable(ExportAutoCheckScope.VariableName),
+                value => AcadApp.SetSystemVariable(ExportAutoCheckScope.VariableName, value));
+            Write(autoCheck.Disable());
             var project = PlantProjectAccess.Read();
             var host = new AutoCadHost(project.IsCurrent, files);
             var original = host.OriginalDrawing!;
@@ -110,8 +115,32 @@ public sealed class BatchExportCommands
                 + (ex is FileNotFoundException or FileLoadException or TypeLoadException
                     ? "；请在已加载 Plant 环境的 AutoCAD Plant 3D 2026 中运行此命令。" : ""));
         }
-        finally { await LogRetentionPrompt.FinishAsync(files, issues); }
-        // 租约覆盖最后的保留询问和文件清理。
+        finally
+        {
+            try
+            {
+                // 原生等待器已完成才可恢复；Protect 表示可能仍有原生命令或清理未结束。
+                var outcome = autoCheck?.Finish(files.ProtectionReason);
+                if (outcome != null)
+                {
+                    if (outcome.HasIssue) { issues = true; files.Protect(outcome.Message); }
+                    if (outcome.Message.Length != 0) Write(outcome.Message);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                issues = true;
+                string message = ExportAutoCheckScope.VariableName + " 环境收尾失败，未确认恢复：" + ex.Message;
+                files.Protect(message); Write(message);
+            }
+            try { await LogRetentionPrompt.FinishAsync(files, issues); }
+            catch (System.Exception ex)
+            {
+                files.Protect("日志收尾失败：" + ex.Message);
+                Write("已保留本批日志；日志收尾失败：" + ex.Message);
+            }
+        }
+        // 租约覆盖环境恢复、最后的保留询问和文件清理。
     }
 
     /// <summary>向当前活动文档写入中文消息；文档失效时仅记录调试信息。</summary>

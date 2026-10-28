@@ -6,7 +6,7 @@ using Pn3DKit.Utils;
 namespace Pn3DKit.Tests;
 
 /// <summary>通过真实临时文件和离线宿主验证插件策略，不加载 Autodesk 或连接 CAD。</summary>
-public sealed class Pn3DKitTests
+public sealed partial class Pn3DKitTests
 {
     /// <summary>类型识别使用清单路径，默认值与显式关键字均符合命令契约。</summary>
     [Fact]
@@ -533,6 +533,8 @@ public sealed class Pn3DKitTests
         internal Exception? CloseFailure { get; set; }
         internal Action? AfterExport { get; set; }
         internal Action<int>? AfterStateRead { get; set; }
+        /// <summary>断言真实批次协调器每个宿主阶段的临时变量；不连接 CAD。</summary>
+        internal Action<string>? BeforeOperation { get; set; }
         private int _stateReads;
         public void EnsureProject()
         {
@@ -541,19 +543,23 @@ public sealed class Pn3DKitTests
         public ICadDrawing? FindOpen(string source) => Existing.Contains(source) ? Drawings[source] : null;
         public Task<ICadDrawing> OpenAsync(string source)
         {
+            BeforeOperation?.Invoke("Open");
             if (OpenFailure != null) throw OpenFailure;
             Opened.Add(source);
             return Task.FromResult<ICadDrawing>(Drawings[source]);
         }
-        public Task ActivateAsync(ICadDrawing drawing) { Active = drawing; return Task.CompletedTask; }
+        public Task ActivateAsync(ICadDrawing drawing)
+        { BeforeOperation?.Invoke("Activate"); Active = drawing; return Task.CompletedTask; }
         public Task<DrawingState> ReadStateAsync(ICadDrawing drawing)
         {
+            BeforeOperation?.Invoke("ReadState");
             var fake = (FakeDrawing)drawing;
             AfterStateRead?.Invoke(++_stateReads);
             return Task.FromResult(new DrawingState(fake.Modified, fake.ReadOnly));
         }
         public Task SaveAsync(ICadDrawing drawing, string marker)
         {
+            BeforeOperation?.Invoke("Save");
             Saves++;
             if (SaveFailure != null) throw SaveFailure;
             if (SaveClearsDirty) ((FakeDrawing)drawing).Modified = false;
@@ -561,6 +567,7 @@ public sealed class Pn3DKitTests
         }
         public Task ExportAsync(ICadDrawing drawing, string temporary, string version, string marker)
         {
+            BeforeOperation?.Invoke("Export");
             Exports++;
             LastTemporary = temporary;
             if (ExportContent != null) File.WriteAllText(temporary, ExportContent);
@@ -571,6 +578,7 @@ public sealed class Pn3DKitTests
         }
         public Task CloseAsync(ICadDrawing drawing)
         {
+            BeforeOperation?.Invoke("Close");
             if (CloseFailure != null) throw CloseFailure;
             Closed.Add(((FakeDrawing)drawing).Path);
             return Task.CompletedTask;

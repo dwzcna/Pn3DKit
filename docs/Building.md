@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.39 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.39
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.40 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.40
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.39 -OutputDirectory artifacts/release/0.1.39
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.40 -OutputDirectory artifacts/release/0.1.40
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源代码，不加载 Autodesk；SDK 替身仅验证来源与生命周期。build/CadVisualPrototype、CadVisualHost、CadVisualProbe 是独立原生验证项目，不加入产品解决方案或单 DLL 载荷；使用授权目录及实例，不调用 Computer Use、不更改 CAD 安全设置。
@@ -90,11 +90,11 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.39/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.40/。
 
 ## 当前实现与验收
 
-0.1.39 将 PNFASTPANEL 每次启动 CAD 后的首次打开改为浮动，当前会话重开保留手动位置；左右停靠、自动隐藏、原有尺寸和面板身份保持。保留属性行上移／下移、统一键值、三种半透明占位、草稿背景、仅 Enter 提交、失焦留稿和 Esc。验证、元数据与候选见 Changlog.md 和 artifacts/validation/0.1.39/；真实 CAD 首次浮动、手动停靠后重开、重启及焦点交互待复测。
+0.1.40 在 PNDWGEXPORT 入口临时关闭 PLANTDWGCHECKERAUTOCHECK 并回读确认，安全收尾后恢复原值；保留开始前的一次保存授权，未知原生状态不恢复，恢复失败保留日志并单独报告。验证、元数据与候选见 Changlog.md 和 artifacts/validation/0.1.40/；实际 Plant 提示及崩溃复现待实机复测。PNFASTPANEL 默认浮动、属性行移动、统一键值及草稿行为继续保持。
 
 已完成：0.1.3 图纸身份修复已独立提交；0.1.4 新增 REBUILDPNTAGBYCLASS。BatchRunGate 覆盖导出、批量检查、重建及异步保存；TagRebuildPolicy 负责预检分类、注册键重号及占用链冲突；TagRebuildBatch 负责单撤销组和逐对象回读；TagRebuildJournal 保存追加历史。SDK 适配位于 PlantTagRebuildAccess，只写 PnId.Tag，支持 SLINE 和管线组；PlantTagCatalogAccess 批量读取 PnPRow.ClassName 并缓存类别、格式和成员关联。
 
@@ -104,7 +104,7 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 
 0.1.29 已完成的 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
 
-未完成：PNFASTPANEL 的真实 CAD 首次浮动、手动停靠后关闭重开、重启后首次浮动，以及行移动菜单、Alt 方向键、模态所有者、Ctrl+U、输入法、焦点、Enter／Esc 与 PICKFIRST，以及项目显示名的实机对照仍待复测。本轮不操作用户图纸。外参视觉边界继续保持未验证保护。0.1.36 已正式发布并回下载核验；0.1.37／0.1.38 已分别本地提交，0.1.39 按确认计划验证后本地提交，不推送、不创建 Release。
+未完成：PNDWGEXPORT 的真实 Plant 自动检查提示、保存弹窗和崩溃复现，PNFASTPANEL 的首次浮动、手动停靠后重开、行移动、Alt 方向键、模态所有者、Ctrl+U、输入法、焦点、Enter／Esc 与 PICKFIRST，以及项目显示名的实机对照仍待复测。本轮不操作用户图纸。外参视觉边界继续保持未验证保护。0.1.36 已正式发布并回下载核验；0.1.37～0.1.39 已分别本地提交，0.1.40 按确认计划验证后本地提交，不推送、不创建 Release。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 
@@ -115,6 +115,8 @@ RibbonController 在“Pn3D工具箱”中按顺序创建快速操作、位号�
 类别名称适配分在 PlantTagCatalogNames.cs（PlantTagCatalogAccess 的 partial），必须接收所属 Project。CAD 主线程先调用 part.GetClassDisplayName(className)，项目名称空白或普通读取错误时再读 db.Tables[className].GetTableAttributeValue(PnPDatabase.DisplayNameAttribute)，最终回退内部类名。OperationCanceledException 和 SDK UserBreak 继续中止；每级独立处理，项目读取成功不访问表。批量 Read 传已有 part，面板传 context.Part；名称缓存仍按项目部分与实际类别。四个本图／项目检查和重建清单共用扫描结果，DisplayName 仅用于标题和排序，不改变 ClassName、格式、身份或写入。
 
 RunPaths 统一以系统文档目录生成 Pn3DKit/用途/时间戳。RunLogFiles 在 CreateNew 成功后登记文件归属，记录本批新建末级目录和原生独占标记；所有流关闭并封存后才可按清单删除，不递归清理。LogRetentionPolicy 根据结构化最终结果判断默认值；LogRetentionPrompt 在命令末尾处理 Y／N／Esc，Session 入口通过当前文档命令上下文交互，批次租约覆盖清理。AutoCadHost 在原生回调状态未知或等待器清理失败时保护本批现场；普通错误仍可在安全交互时明确选择 N。该流程不接触离线验证产物。
+
+PNDWGEXPORT 的 ExportAutoCheckScope 由入口在批次互斥及活动图纸确认后、项目读取前开始，使用主线程 Get／SetSystemVariable 委托记录真实整数原值、设置 0 并回读。设置尝试前登记恢复责任，涵盖 SDK 已改值后抛错；读取／写入／确认失败停止，初始化异常仍走 finally 恢复。保护跨越所有逐图和原生等待，不加入 AutoCadHost 或 CadLispCommands 的单次对话框恢复列表。入口在原生任务及等待器收尾后、LogRetentionPrompt 前执行 Finish；RunLogFiles.ProtectionReason 非空则不接触 SDK，不恢复，主线程错误或恢复回读失败返回独立结果并 Protect。命令行展示关闭和恢复结果；原始批次异常保留，环境和日志清理异常均在 async void 入口捕获。保护仅供导出使用，不改变其他命令。
 
 PNFASTPANEL 保留 PICKFIRST，由 FastPanelController 管理原生 PaletteSet。首次创建在 Visible=true 后设置 DockSides.None，覆盖宿主恢复的旧停靠；复用分支只显示、激活，不重设位置。GUID、左右 DockEnabled、320×480 DIP 初始尺寸和 280×300 DIP 最小尺寸沿用原值。FastPropertiesView 使用连续的 Pn属性／值两列，默认一空行；属性行可增删改，路径列始终可编辑。路径输入立即撤销旧行许可，回车或失焦才读取；值仅回车提交，失焦、Tab、切换行及菜单结束均保留草稿，Esc 撤销当前格输入。UI 不持有 SDK 对象，模型不引用 Autodesk。
 
