@@ -33,22 +33,6 @@ internal sealed class XrefBlockProgress
     internal void Compare(int index, int total, string name) =>
         Stage("正在对比块 " + index + "/" + total + " " + OneLine(name) + " ...");
 
-    /// <summary>仅在报告成功写入并刷新后显示结果；写入故障不输出伪造的完成消息。</summary>
-    /// <param name="result">已比较或中断后未执行的候选。</param>
-    /// <param name="append">现有逐组报告写入器，任何异常直接传播。</param>
-    internal void Complete(XrefBlockComparisonResult result, Action<XrefBlockComparisonResult> append)
-    {
-        append(result);
-        string label = ResultLabel(result);
-        Emit("块 " + OneLine(result.Name) + " " + label
-            + (result.Status == XrefBlockComparisonStatus.Different && !result.Complete ? "；同时存在未验证来源" : ""));
-        _current = null;
-    }
-
-    /// <summary>命令行采用符合／不符合，CSV 继续使用原有匹配／不匹配文字。</summary>
-    internal static string ResultLabel(XrefBlockComparisonResult result) =>
-        result.ResultText switch { "匹配" => "符合", "不匹配" => "不符合", _ => "未验证" };
-
     /// <summary>中立报告的命令行文字保持原有三种结果。</summary>
     internal static string ResultLabel(XrefBlockReportResult result) =>
         result.ResultText switch { "匹配" => "符合", "不匹配" => "不符合", _ => "未验证" };

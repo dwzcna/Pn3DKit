@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.44 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.44
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.45 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.45
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.44 -OutputDirectory artifacts/release/0.1.44
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.45 -OutputDirectory artifacts/release/0.1.45
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源代码，不加载 Autodesk；SDK 替身仅验证来源与生命周期。build/CadVisualPrototype、CadVisualHost、CadVisualProbe 是独立原生验证项目，不加入产品解决方案或单 DLL 载荷；使用授权目录及实例，不调用 Computer Use、不更改 CAD 安全设置。
@@ -75,7 +75,7 @@ XrefBlockCadCatalog 先用 IndexReferences 发现附着／覆盖来源并冻结 
 
 专用 XrefBlockVisualSession 在 CAD 主线程串行准备及绘制，公共 WCS 俯视正交取景、2048×2048 双背景；解析有效颜色／透明度／线宽，多线宽使用同组编码色表。原生后端不能确认的非连续线型、遮罩、重叠异色排序及复杂类型明确未验证。AcDbMgdBrep 不恢复，仍为九个不复制 SDK 参考。
 
-VisualFrame／VisualSample／BlockVisualComparison／BlockVisualDiff 不依赖 Autodesk。CompressedVisualSample 无损压缩代表，摘要筛选后仍解压完整比较；XrefBlockVisualBatch 串行归组，已确认差异优先于未知来源。保留旧快照策略及回归供历史行为核对，不作为视觉结论或降级路径。
+VisualFrame／VisualSample／BlockVisualComparison／BlockVisualDiff 不依赖 Autodesk。CompressedVisualSample 无损压缩代表，摘要筛选后仍解压完整比较；XrefBlockVisualBatch 串行归组，已确认差异优先于未知来源。旧字段快照、DwgFiler及比较批次已移除，候选筛选、报告、取消和名称统计回归继续保留。
 
 XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、身份变化、设备或释放故障直接停止。Remaining／CaptureNames／结束报告只处理内存。中立 XrefBlockReportResult 驱动三列 Result.csv 和详情 LOG，不用空快照冒充视觉结果。VisualDifferenceReport 仅为不同组与首组代表创建带图注的无损 PNG。
 
@@ -90,11 +90,11 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.44/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.45/。
 
 ## 当前实现与验收
 
-0.1.44 项目写后只更新本行索引，写前优先注册表并以SDK过滤查询当前占用；从范围内管线反查组，批次租约内缓存纯格式片段及元数据副本。Sdk值、权限、求值不缓存。CadMaintenanceProbe 为独立SDK验证入口，不进入交付；实际筛选与关系逆查待CAD空闲后验收，发布前必须完成。证据 artifacts/validation/0.1.44/。
+0.1.45 项目写后只更新本行索引，写前优先注册表并以SDK过滤查询当前占用；从范围内管线反查组，批次租约内缓存纯格式片段及元数据副本。Sdk值、权限、求值不缓存。CadMaintenanceProbe 为独立SDK验证入口，不进入交付；实际筛选与关系逆查待CAD空闲后验收，发布前必须完成。证据 artifacts/validation/0.1.45/。
 
 已完成：0.1.3 图纸身份修复已独立提交；0.1.4 新增 REBUILDPNTAGBYCLASS。BatchRunGate 覆盖导出、批量检查、重建及异步保存；TagRebuildPolicy 负责预检分类、注册键重号及占用链冲突；TagRebuildBatch 负责单撤销组和逐对象回读；TagRebuildJournal 保存追加历史。SDK 适配位于 PlantTagRebuildAccess，只写 PnId.Tag，支持 SLINE 和管线组；PlantTagCatalogAccess 批量读取 PnPRow.ClassName 并缓存类别、格式和成员关联。
 

@@ -285,10 +285,6 @@ public sealed class XrefBlockJournal : IDisposable
         Flush();
     }, "输出视觉差异图");
 
-    /// <summary>候选完成后立即写一行三列结果；详细来源、分组、差异和错误保留在 LOG。</summary>
-    public void AppendComparison(XrefBlockComparisonResult result) =>
-        AppendComparison(XrefBlockReportResult.FromContent(result));
-
     /// <summary>与比较方法无关的报告入口；视觉比较不伪造旧字段快照。</summary>
     public void AppendComparison(XrefBlockReportResult result)
     {
@@ -313,13 +309,12 @@ public sealed class XrefBlockJournal : IDisposable
     }
 
     /// <summary>只使用内存完成结束汇总，源数据库已经关闭时也不再调用 SDK。</summary>
-    public void Complete(XrefBlockScanResult result, XrefBlockStatistics statistics,
-        IReadOnlyList<XrefBlockComparisonResult>? comparisons = null, int rootReads = 0, int readers = 0) =>
-        CompleteVisual(result, statistics, comparisons?.Select(XrefBlockReportResult.FromContent).ToArray(), rootReads, readers);
+    public void Complete(XrefBlockScanResult result, XrefBlockStatistics statistics) =>
+        CompleteVisual(result, statistics);
 
     /// <summary>视觉比较结束只使用中立报告 DTO 及内存清单，不读取旧内容快照。</summary>
     public void CompleteVisual(XrefBlockScanResult result, XrefBlockStatistics statistics,
-        IReadOnlyList<XrefBlockReportResult>? comparisons = null, int rootReads = 0, int readers = 0)
+        IReadOnlyList<XrefBlockReportResult>? comparisons = null, int sourcePrepares = 0, int readers = 0)
     {
         WriteStatistics(result.Inventory, statistics);
         Report(() =>
@@ -343,7 +338,7 @@ public sealed class XrefBlockJournal : IDisposable
             if (comparisons != null)
             {
                 _log.WriteLine("比较候选名称组：" + comparisons.Count
-                    + "；实际候选来源准备：" + rootReads + "；绘制设备创建：" + readers);
+                    + "；实际候选来源准备：" + sourcePrepares + "；绘制设备创建：" + readers);
                 _log.WriteLine("比较结论：" + (comparisons.Any(c => c.HasIssues)
                     ? "存在不匹配或未验证项，默认保留日志。" : "已完成候选均匹配；没有候选时无需内容比较。"));
                 foreach (var group in comparisons.GroupBy(c => c.ResultText))

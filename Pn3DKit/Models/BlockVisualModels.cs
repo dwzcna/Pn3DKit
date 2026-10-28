@@ -46,11 +46,6 @@ public sealed record XrefBlockReportResult(string Name, XrefBlockComparisonStatu
     };
     /// <summary>任何差异或不完整情况默认保留报告。</summary>
     public bool HasIssues => !Complete || Status != XrefBlockComparisonStatus.Consistent;
-    /// <summary>旧离线字段比较回归通过适配进入同一报告格式，不作为视觉绘制结果。</summary>
-    public static XrefBlockReportResult FromContent(XrefBlockComparisonResult result) =>
-        new(result.Name, result.Status, result.Complete, result.Entries,
-            result.Groups.Select(g => new XrefBlockReportGroup(g.Number, g.Definitions.Select(d => d.Entry).ToArray())).ToArray(),
-            result.Differences, result.Problems);
 }
 
 /// <summary>新发现的内容组与第一组代表的差异，调用方同步处理后即可释放原始像素。</summary>

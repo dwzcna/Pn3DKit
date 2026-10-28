@@ -19,8 +19,6 @@ public sealed class XrefCatalogTests : IDisposable
         _output = output;
         Database.Files.Clear(); Database.Reads.Clear(); Database.Failures.Clear(); Database.Created.Clear(); Database.ReadModes.Clear();
         Database.OnGetObject = null;
-        XrefBlockSnapshotReader.Created = 0; XrefBlockSnapshotReader.Disposed = 0;
-        XrefBlockSnapshotReader.Reads.Clear(); XrefBlockSnapshotReader.Snapshot = null; XrefBlockSnapshotReader.OnRead = null;
         _journal = new(_root, "A.dwg", _files);
     }
 
@@ -486,11 +484,9 @@ public sealed class XrefCatalogTests : IDisposable
         }
     }
 
-    /// <summary>统计已经刷新后才读取候选；无候选时没有内容读取器或根读取。</summary>
-    [Theory]
-    [InlineData(0)]
-    [InlineData(2)]
-    public void OnlyRepeatedNormalNamesReachContentReaders(int shared)
+    /// <summary>统计先落盘，仅重复普通名称定位视觉来源；匿名和唯一名称不准备内容。</summary>
+    [Theory] [InlineData(0)] [InlineData(4)]
+    public void OnlyRepeatedNormalNamesReachVisualPreparation(int shared)
     {
         var main = Source("A.dwg"); var child = Source("b.dwg"); var other = Source("c.dwg");
         var sources = new[] { main, child, other };
@@ -501,78 +497,42 @@ public sealed class XrefCatalogTests : IDisposable
             for (int i = 0; i < shared; i++) sources[index].Block("Shared" + i);
         }
         main.Reference("B", child, child.Filename); main.Reference("C", other, other.Filename);
-        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
+        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => {}, _journal);
         catalog.Discover(); var inventory = catalog.ReadNames();
         var statistics = Pn3DKit.Utils.XrefBlockNames.Summarize(inventory);
         _journal.WriteStatistics(inventory, statistics);
-        XrefBlockSnapshotReader.OnRead = (database, id) =>
+        var candidates = Pn3DKit.Utils.XrefBlockComparison.Candidates(inventory, statistics);
+        foreach (var entry in candidates.SelectMany(c => c.Entries))
         {
             Assert.Contains("Unique0_0,1,1", XrefNameCsvTests.ReadLive(_journal.NormalPath));
             Assert.Contains("*U1,1/2/3,3", XrefNameCsvTests.ReadLive(_journal.AnonymousPath));
-            Assert.False(database.IsDisposed);
-            Assert.StartsWith("Shared", ((BlockTableRecord)database.Objects[id]).Name);
-        };
-        var candidates = Pn3DKit.Utils.XrefBlockComparison.Candidates(inventory, statistics);
-        var results = new List<XrefBlockComparisonResult>();
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        XrefBlockComparisonBatch.Run(candidates, catalog.ReadDefinition, () => catalog.ScopeComplete, () => { },
-            _journal.AppendComparison, results);
-        _journal.Complete(new(inventory), statistics, results, catalog.RootReads, catalog.ReadersCreated);
-        Assert.Equal(shared, candidates.Count);
-        Assert.Equal(shared * 3, catalog.RootReads);
-        Assert.Equal(shared == 0 ? 0 : 3, catalog.ReadersCreated);
-        Assert.Equal(shared * 3, XrefBlockSnapshotReader.Reads.Count);
-        Assert.All(results, r => Assert.Equal(XrefBlockComparisonStatus.Consistent, r.Status));
-        Assert.Equal(0, XrefBlockSnapshotReader.Disposed);
-        _output.WriteLine("XREF_COMPARISON_EVIDENCE=" + System.Text.Json.JsonSerializer.Serialize(new
-        {
-            Sources = 3, UniqueNames = 600, AnonymousNames = 1, CandidateNames = candidates.Count,
-            RootsRead = catalog.RootReads, ContentReaders = catalog.ReadersCreated,
-            ComparisonMs = timer.Elapsed.TotalMilliseconds, Evidence = "生产目录／候选／报告源码加内容替身，非 DWG 实测"
-        }));
+            var located = catalog.LocateVisual(entry);
+            Assert.False(located.Database.IsDisposed);
+            Assert.StartsWith("Shared", ((BlockTableRecord)located.Database.Objects[located.Definition]).Name);
+        }
+        Assert.Equal(shared, candidates.Count); Assert.Equal(shared * 3, catalog.VisualPrepares);
+        _output.WriteLine("XREF_CANDIDATE_EVIDENCE=" + System.Text.Json.JsonSerializer.Serialize(new
+        { UniqueNames = 600, AnonymousNames = 1, CandidateNames = candidates.Count, catalog.VisualPrepares,
+          Evidence = "生产检索代码与SDK替身，不是实际DWG耗时" }));
     }
 
-    /// <summary>同一根复用快照，读取器先于工具数据库释放；宿主数据库保持打开。</summary>
+    /// <summary>多次定位复用旁路数据库，释放后宿主保持打开。</summary>
     [Fact]
-    public void DefinitionCacheAndReaderLifetimeAreScopedToSource()
+    public void VisualSourceLifetimeRemainsScoped()
     {
         var main = Source("A.dwg"); var child = Source("b.dwg");
         main.Block("Valve"); child.Block("Valve"); main.Reference("B", null, child.Filename);
-        using (var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal))
+        using (var catalog = new XrefBlockCadCatalog(main, main.Filename, () => {}, _journal))
         {
-            catalog.Discover(); var entries = catalog.ReadNames().Entries;
-            foreach (var entry in entries)
+            catalog.Discover();
+            foreach (var entry in catalog.ReadNames().Entries)
             {
-                var first = catalog.ReadDefinition(entry);
-                Assert.Same(first.Content, catalog.ReadDefinition(entry).Content);
+                var first = catalog.LocateVisual(entry); var second = catalog.LocateVisual(entry);
+                Assert.Same(first.Database, second.Database); Assert.Equal(first.Definition, second.Definition);
             }
-            Assert.Equal(2, catalog.RootReads); Assert.Equal(2, catalog.ReadersCreated);
-            catalog.Dispose(); catalog.Dispose();
         }
-        Assert.Equal(2, XrefBlockSnapshotReader.Disposed);
         Assert.False(main.IsDisposed);
         Assert.All(Database.Created.Where(db => !db.Fixture), db => Assert.True(db.IsDisposed));
-    }
-
-    /// <summary>普通 SDK 读取错误只使对应内容未知，UserBreak 和文档停止必须传播。</summary>
-    [Theory]
-    [InlineData("sdk")]
-    [InlineData("cancel")]
-    [InlineData("context")]
-    public void ContentReadFailuresKeepTheirBatchMeaning(string failure)
-    {
-        var main = Source("A.dwg"); main.Block("Valve");
-        using var catalog = new XrefBlockCadCatalog(main, main.Filename, () => { }, _journal);
-        catalog.Discover(); var entry = Assert.Single(catalog.ReadNames().Entries);
-        XrefBlockSnapshotReader.OnRead = (_, _) =>
-        {
-            if (failure == "context") throw new Pn3DKit.Commands.XrefCheckStoppedException("原图关闭");
-            throw new Autodesk.AutoCAD.Runtime.Exception(failure == "cancel"
-                ? Autodesk.AutoCAD.Runtime.ErrorStatus.UserBreak : Autodesk.AutoCAD.Runtime.ErrorStatus.FileNotFound);
-        };
-        if (failure == "context") Assert.Throws<Pn3DKit.Commands.XrefCheckStoppedException>(() => catalog.ReadDefinition(entry));
-        else if (failure == "cancel") Assert.Throws<OperationCanceledException>(() => catalog.ReadDefinition(entry));
-        else Assert.Contains("SDK ErrorStatus=FileNotFound", catalog.ReadDefinition(entry).Content.ReadError);
     }
 
     /// <summary>先完整发现来源再扫描名称，分母固定、主图优先，多链不重复加载，块表最多两阶段各一次。</summary>
@@ -607,13 +567,13 @@ public sealed class XrefCatalogTests : IDisposable
         Assert.Equal(new[] { (1, 3, "A.dwg"), (2, 3, "b.dwg"), (3, 3, "c.dwg") }, scans);
         Assert.All(tableReads.Values, value => Assert.Equal(2, value));
         Assert.Equal(1, Database.Reads[child.Filename]); Assert.Equal(1, Database.Reads[nested.Filename]);
-        Assert.Equal(0, catalog.RootReads); Assert.Equal(0, catalog.ReadersCreated);
+        Assert.Equal(0, catalog.VisualPrepares);
         var inventory = catalog.ReadNames();
         Assert.Equal(new[] { 1, 2, 3 }, inventory.Sources.Select(s => s.DwgNo));
         Assert.Equal(2, inventory.Sources.Single(s => s.DwgNo == 2).Chains.Count);
         _output.WriteLine("XREF_CENSUS_EVIDENCE=" + System.Text.Json.JsonSerializer.Serialize(new
         { Sources = scans.Count, Totals = scans.Select(s => s.Total), TableReads = tableReads,
-          DiskLoads = Database.Reads, RootReads = catalog.RootReads, Readers = catalog.ReadersCreated,
+          DiskLoads = Database.Reads, VisualPrepares = catalog.VisualPrepares,
           Evidence = "生产检索源码与 SDK 替身，不是实际 DWG 耗时" }));
     }
 
@@ -737,8 +697,7 @@ public sealed class XrefCatalogTests : IDisposable
             catalog.VerifyVisual(entry, location.Definition);
             Assert.True(location.Definition.IsValid);
         }
-        Assert.Equal(2, catalog.VisualPrepares); Assert.Equal(0, catalog.RootReads);
-        Assert.Equal(0, catalog.ReadersCreated); Assert.Equal(0, XrefBlockSnapshotReader.Created);
+        Assert.Equal(2, catalog.VisualPrepares);
     }
 
     /// <summary>视觉准备前改名属于来源身份变化，不能降为普通未验证后继续。</summary>

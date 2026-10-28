@@ -288,13 +288,13 @@ public static class Probe
             journal.AppendVisualDifference);
         Call(catalog,"VerifySources");
         int Number(object o,string p)=>(int)o.GetType().GetProperty(p,Hidden)!.GetValue(o)!;
-        int oldReads=Number(catalog,"RootReads"),prepares=Number(catalog,"VisualPrepares"),devices=Number(visual,"DevicesCreated");
+        int prepares=Number(catalog,"VisualPrepares"),devices=Number(visual,"DevicesCreated");
         journal.CompleteVisual(new(inventory,false,null),statistics,completed,prepares,devices);
-        return JsonSerializer.Serialize(new{Success=oldReads==0&&completed.Count==candidates.Count,RealCatalog=true,
+        return JsonSerializer.Serialize(new{Success=completed.Count==candidates.Count,RealCatalog=true,
             Sources=inventory.Sources.Count,Names=inventory.Entries.Count,Candidates=candidates.Count,
             Completed=completed.Count,Results=completed.GroupBy(r=>r.ResultText).ToDictionary(g=>g.Key,g=>g.Count()),
             Problems=completed.SelectMany(r=>r.Problems).GroupBy(x=>x).Select(g=>new{Problem=g.Key,Count=g.Count()}).ToArray(),
-            Prepares=prepares,Devices=devices,RasterCalls=Number(visual,"RasterCalls"),LegacySnapshots=oldReads,
+            Prepares=prepares,Devices=devices,RasterCalls=Number(visual,"RasterCalls"),
             ElapsedSeconds=clock.Elapsed.TotalSeconds,ProductAssembly=productFile},new JsonSerializerOptions{WriteIndented=true});
     }
 

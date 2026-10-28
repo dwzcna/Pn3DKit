@@ -41,7 +41,7 @@ public sealed class XrefProgressTests : IDisposable
     {
         using var journal = new XrefBlockJournal(_root, "A.dwg", new RunLogFiles());
         var entries = new[] { Entry(1), Entry(2) };
-        var result = new XrefBlockComparisonResult("Valve", status, complete, entries, [], [], []);
+        var result = new XrefBlockReportResult("Valve", status, complete, entries, [], [], []);
         var output = new List<string>(); var clock = new XrefTestTimeProvider();
         var progress = new XrefBlockProgress(message =>
         {
@@ -59,7 +59,7 @@ public sealed class XrefProgressTests : IDisposable
     public void OutputFailureDoesNotPrintAResult()
     {
         var output = new List<string>(); var progress = new XrefBlockProgress(output.Add);
-        var result = new XrefBlockComparisonResult("Valve", XrefBlockComparisonStatus.Consistent, true, [], [], [], []);
+        var result = new XrefBlockReportResult("Valve", XrefBlockComparisonStatus.Consistent, true, [], [], [], []);
         Assert.Throws<XrefBlockLogException>(() => progress.Complete(result, _ => throw new XrefBlockLogException("磁盘故障")));
         Assert.Empty(output);
     }
@@ -88,14 +88,14 @@ public sealed class XrefProgressTests : IDisposable
         var output = new List<string>(); var progress = new XrefBlockProgress(output.Add);
         var a = new XrefBlockCandidate("A", [Entry(1, "A"), Entry(2, "A")]);
         var b = new XrefBlockCandidate("B", [Entry(1, "B"), Entry(2, "B")]);
-        bool stop = false; int reads = 0; var completed = new List<XrefBlockComparisonResult>();
-        var content = new BlockContentSnapshot("root", new Dictionary<string, BlockContentNode>
-        { ["root"] = new("root", "块定义", new Dictionary<string, string>(), []) }, []);
-        Assert.Throws<OperationCanceledException>(() => XrefBlockComparisonBatch.Run([a, b],
-            entry => { reads++; return new(entry, content); }, () => true,
-            () => { if (stop) throw new OperationCanceledException(); },
+        bool stop = false; int reads = 0; var completed = new List<XrefBlockReportResult>();
+        VisualSample Sample(int no) => new(no, new(0,0,1,1,"fixture"), [0,0,255,255], [0,0,255,255],
+            [0xFFFF0000], [25], true, true, null, true, null);
+        Assert.Throws<OperationCanceledException>(() => XrefBlockVisualBatch.Run([a, b],
+            candidate => candidate.Entries.Select(entry => { reads++; return new XrefVisualCapture(entry, Sample(entry.Source.DwgNo)); }),
+            () => true, () => { if (stop) throw new OperationCanceledException(); },
             result => { progress.Complete(result, journal.AppendComparison); stop = true; }, completed, progress.Compare));
-        foreach (var pending in XrefBlockComparisonBatch.Remaining([a, b], completed, "用户取消"))
+        foreach (var pending in XrefBlockVisualBatch.Remaining([a, b], completed, "用户取消"))
             progress.Complete(pending, journal.AppendComparison);
         Assert.Equal(2, reads);
         Assert.Equal(1, output.Count(s => s == "块 A 符合"));

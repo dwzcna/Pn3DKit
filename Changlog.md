@@ -1,5 +1,19 @@
 # Pn3DKit 需求、实现与验证记录
 
+## 0.1.45（2026-10-29）
+
+### 变更与交付
+
+- 移除无生产入口的字段快照比较和自写DwgFiler；保留候选、视觉和三列报告。目录选择改用WPF原生OpenFolderDialog，保持CAD窗口所有者及FILEDIA行为。
+- 按确认的 0.1.41–0.1.47 顺序独立验证、本地提交；全部完成后统一推送并发布 v0.1.47。十命令、九 SDK 引用、.NET 8／x64 和单 DLL 保持。
+
+### 验证
+
+- x64 Debug／Release 均零警告、零错误，两配置各921项有效离线回归通过；首轮定向154项通过。上一版956项到本版921项的差异来自删除旧内容图比较专属回归并迁移报告／覆盖范围测试；test-migration.json 保存逐项名称清单，报告三种映射、每块单行、编号去重数值排序、BOM／转义、未知来源、取消、结果故障及支持范围均继续验证。
+- 删除 SnapshotReader、XrefContentFiler、自写DwgFiler、旧ComparisonBatch、旧内容图模型／算法／缓存和适配重载；仅保留名称候选、范围策略及视觉中立报告。生产、测试及原生Probe未保留旧符号引用，已有原生视觉Probe按新模型编译零警告、零错误。
+- .NET8 WPF只提供Window所有者重载，首轮直接传HWND构建失败；改为Windows公开活动窗口API明确CAD所有者，无私有反射或虚假WPF窗口，并恢复此前窗口。首轮构建证据保留。UseWindowsForms继续提供离屏Bitmap所需框架参考。实际目录弹窗所有者与CAD交互待复测。
+- 本机AGENTS.md受.gitignore排除，已通过本轮补丁修正事实但未强制纳入提交；开发说明同步当前插件结构。十命令、九SDK引用／CopyLocal=false、.NET8／AMD64、单DLL、ZIP及内外SHA-256通过；证据 artifacts/validation/0.1.45/，候选 artifacts/release/0.1.45/。
+
 ## 0.1.44（2026-10-29）
 
 ### 变更与交付

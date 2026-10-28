@@ -1,30 +1,45 @@
-using Forms = System.Windows.Forms;
+using Microsoft.Win32;
+using System.Runtime.InteropServices;
 
 namespace Pn3DKit.UI;
 
-/// <summary>由命令行 C 入口直接打开系统文件夹选择器，不显示自定义目录窗口。</summary>
-/// <remarks>必须在 CAD 的 STA 主线程调用；不创建批次文件，不取得 CAD 窗口所有权。</remarks>
+/// <summary>命令行C入口的原生文件夹选择器；仅在CAD的STA主线程调用。</summary>
 internal static class FolderSelectDialogue
 {
-    /// <summary>从建议路径最近的已有父目录开始浏览，返回用户选中的文件夹。</summary>
-    /// <param name="suggested">自动建议目录，允许尚未创建。</param>
-    /// <param name="ownerHandle">作为窗口所有者的 CAD 主窗口句柄。</param>
-    /// <param name="description">选择器标题，默认保持导出用途。</param>
-    /// <returns>用户选定的目录；取消时为空，由调用方统一验证路径。</returns>
+    /// <summary>取得当前CAD UI线程的活动窗口，供WPF原生对话框确定所有者。</summary>
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetActiveWindow();
+    /// <summary>仅切换当前线程活动窗口，退出时恢复，不创建或释放宿主窗口。</summary>
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetActiveWindow(IntPtr window);
+
+    /// <summary>从建议路径最近的已有父目录浏览；取消返回空，不创建或释放宿主窗口。</summary>
+    /// <param name="suggested">允许尚未存在的建议目录。</param>
+    /// <param name="ownerHandle">CAD主窗口所有者句柄。</param>
+    /// <param name="description">用途专属窗口标题。</param>
+    /// <returns>已选目录，后续由统一策略验证。</returns>
     internal static string? Select(string suggested, IntPtr ownerHandle, string description = "Pn3DKit — 选择导出目录")
     {
         string? initial = suggested;
         while (initial != null && !Directory.Exists(initial)) initial = Path.GetDirectoryName(initial);
-        using var picker = new Forms.FolderBrowserDialog
+        var picker = new OpenFolderDialog
         {
-            Description = description, UseDescriptionForTitle = true,
-            AutoUpgradeEnabled = true, ShowNewFolderButton = true,
+            Title = description, Multiselect = false,
             InitialDirectory = initial ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };
-        return picker.ShowDialog(new WindowOwner(ownerHandle)) == Forms.DialogResult.OK
-            ? picker.SelectedPath : null;
+        // .NET 8 的 WPF 公共重载只接收 Window；无所有者重载使用当前线程的活动 HWND。
+        // 用公开 Windows API 明确选定CAD窗口，不创建虚假WPF所有者或反射私有接口。
+        if (ownerHandle == IntPtr.Zero) throw new InvalidOperationException("CAD主窗口已失效。");
+        var previous = GetActiveWindow();
+        try
+        {
+            if (previous != ownerHandle)
+            {
+                SetActiveWindow(ownerHandle);
+                if (GetActiveWindow() != ownerHandle) throw new InvalidOperationException("无法确认目录选择器的CAD窗口所有者。");
+            }
+            return picker.ShowDialog() == true ? picker.FolderName : null;
+        }
+        finally { if (previous != IntPtr.Zero && previous != ownerHandle) SetActiveWindow(previous); }
     }
-
-    /// <summary>只包装 CAD 主窗口句柄，选择器关闭时不释放宿主窗口。</summary>
-    private sealed record WindowOwner(IntPtr Handle) : Forms.IWin32Window;
 }

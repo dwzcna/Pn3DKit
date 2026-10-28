@@ -24,8 +24,6 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         internal List<(string Name, bool Anonymous)> Blocks { get; } = [];
         internal int DwgNo { get; set; }
         internal Dictionary<string, ObjectId> Targets { get; } = new(StringComparer.OrdinalIgnoreCase);
-        internal Dictionary<ObjectId, BlockContentSnapshot> Definitions { get; } = [];
-        internal XrefBlockSnapshotReader? Reader { get; set; }
         internal List<(ObjectId Id, string Alias, string Path, bool Overlay, Database? Loaded, string Status)> References { get; } = [];
         internal bool RelationsIndexed { get; set; }
         internal bool RelationsRead { get; set; }
@@ -53,12 +51,8 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     private SourceState[] _scanPlan = [];
     private Action<int, string>? _nameProgress, _sourceFound;
     private int _nameCount;
-    /// <summary>实际候选根读取数，不含名称扫描及缓存命中。</summary>
-    internal int RootReads { get; private set; }
     /// <summary>视觉流程实际定位的候选来源数，不包含旧字段快照读取。</summary>
     internal int VisualPrepares { get; private set; }
-    /// <summary>按需创建的来源读取器数量。</summary>
-    internal int ReadersCreated { get; private set; }
     /// <summary>未知来源、循环及索引失败均使整体范围不完整。</summary>
     internal bool ScopeComplete { get; private set; } = true;
 
@@ -414,47 +408,6 @@ internal sealed class XrefBlockCadCatalog : IDisposable
         return new(entries, sources, ScopeComplete && _discoveryFinished && _namesFinished);
     }
 
-    /// <summary>只为跨来源命名候选读取二维定义，必要依赖由本源读取器缓存；不查询插入数量。</summary>
-    internal XrefComparedDefinition ReadDefinition(XrefBlockNameEntry entry)
-    {
-        _ensure();
-        var source = _sources.Values.SingleOrDefault(s => s.DwgNo == entry.Source.DwgNo && s.Key == entry.Source.Key)
-            ?? throw new InvalidOperationException("候选来源不属于本次扫描。");
-        if (entry.IsAnonymous || !source.Targets.TryGetValue(entry.Name, out var id))
-            throw new InvalidOperationException("目标不是本次普通块候选。");
-        if (source.Error != null)
-            return new(entry, new("", new Dictionary<string, BlockContentNode>(), [], source.Error));
-        VerifySource(source);
-        if (!id.IsValid || id.IsErased) throw new IOException("候选块已失效或删除：" + entry.Name);
-        if (!source.Definitions.TryGetValue(id, out var content))
-        {
-            try
-            {
-                using (var transaction = source.Database.TransactionManager.StartOpenCloseTransaction())
-                {
-                    var block = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
-                    if (block.IsAnonymous || !string.Equals(XrefBlockNames.RemoveSourceNamespace(block.Name, source.Prefixes),
-                        entry.Name, StringComparison.OrdinalIgnoreCase))
-                        throw new IOException("候选块名称或匿名状态已变化：" + entry.Name);
-                }
-                if (source.Reader == null)
-                { source.Reader = new(source.Database, _ensure, source.Prefixes.ToArray()); ReadersCreated++; }
-                RootReads++;
-                content = source.Reader.Read(id);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (XrefBlockLogException) { throw; }
-            catch (Pn3DKit.Commands.XrefCheckStoppedException) { throw; }
-            catch (CadException ex) when (ex.ErrorStatus == ErrorStatus.UserBreak)
-            { throw new OperationCanceledException("用户取消。", ex); }
-            catch (System.Exception ex)
-            { content = new("", new Dictionary<string, BlockContentNode>(), [], Detail(ex)); }
-            source.Definitions[id] = content;
-        }
-        VerifySource(source);
-        return new(entry, content);
-    }
-
     /// <summary>只定位本批候选，不创建旧字段读取器；源身份、匿名状态及原名均须重新核对。</summary>
     internal (Database Database, ObjectId Definition) LocateVisual(XrefBlockNameEntry entry)
     {
@@ -524,13 +477,6 @@ internal sealed class XrefBlockCadCatalog : IDisposable
     public void Dispose()
     {
         var errors = new List<string>();
-        foreach (var source in _sources.Values)
-        {
-            try { source.Reader?.Dispose(); }
-            catch (System.Exception ex) { errors.Add(Detail(ex)); }
-            finally { source.Reader = null; }
-        }
-
         foreach (var database in _owned)
             try { database.Dispose(); }
             catch (System.Exception ex) { errors.Add(Detail(ex)); }

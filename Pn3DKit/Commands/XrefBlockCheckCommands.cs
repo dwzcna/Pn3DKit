@@ -89,8 +89,7 @@ public sealed class XrefBlockCheckCommands
             catalog.VerifySources();
             journal.Notice("候选比较耗时(ms)：" + stage.Elapsed.TotalMilliseconds.ToString("F1")
                 + "；实际候选来源准备：" + catalog.VisualPrepares + "；专用设备：" + (visual?.DevicesCreated ?? 0)
-                + "；原生绘制调用：" + (visual?.RasterCalls ?? 0) + "；完整读回替代完成标志：" + (visual?.LegacyInvalidFlags ?? 0)
-                + "；旧字段快照读取：" + catalog.RootReads);
+                + "；原生绘制调用：" + (visual?.RasterCalls ?? 0) + "；完整读回替代完成标志：" + (visual?.LegacyInvalidFlags ?? 0));
             Ensure();
         }
         catch (OperationCanceledException) { interrupted = true; stopReason = "用户取消，已中断。"; }
