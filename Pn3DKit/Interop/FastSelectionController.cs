@@ -234,7 +234,8 @@ internal sealed class FastSelectionController : IDisposable
         string? reason = PnPropertyCatalogPolicy.Validate(lease.Context, current, lease.Access.IsCurrent,
             BatchRunGate.IsRunning || !string.IsNullOrEmpty(document.CommandInProgress), !_disposed && _visible());
         if (reason != null) throw new InvalidOperationException(reason);
-        if (!_view.ReadSpecs().SequenceEqual(lease.Specs)) throw new InvalidOperationException("属性行已变化，请重新检索。");
+        if (!_view.ReadSpecs().OrderBy(x => x.Id).SequenceEqual(lease.Specs.OrderBy(x => x.Id)))
+            throw new InvalidOperationException("属性行已变化，请重新检索。");
         return document;
     }
 

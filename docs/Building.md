@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.37 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.37
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.38 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.38
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.37 -OutputDirectory artifacts/release/0.1.37
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.38 -OutputDirectory artifacts/release/0.1.38
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源代码，不加载 Autodesk；SDK 替身仅验证来源与生命周期。build/CadVisualPrototype、CadVisualHost、CadVisualProbe 是独立原生验证项目，不加入产品解决方案或单 DLL 载荷；使用授权目录及实例，不调用 Computer Use、不更改 CAD 安全设置。
@@ -90,11 +90,11 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.37/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.38/。
 
 ## 当前实现与验收
 
-0.1.37 为多选不同值新增值格右键“统一键值”和 Ctrl+U，模态确认只回填草稿，另一次 Enter 才走既有提交。保留 0.1.36 的半透明三种占位、草稿背景、失焦留稿及 Esc。验证、元数据与候选见 Changlog.md 和 artifacts/validation/0.1.37/；实际 CAD 模态所有者、输入法／Enter、焦点及 PICKFIRST 待复测。
+0.1.38 在两列单元格增加上移／下移及 Alt+↑／Alt+↓，复用原行及控件，不刷新票据、不提交草稿或未确认路径；尾空行固定，中间空行可移动。保留统一键值及 0.1.36 的三种半透明占位、草稿背景、仅 Enter 提交、失焦留稿和 Esc。验证、元数据与候选见 Changlog.md 和 artifacts/validation/0.1.38/；真实 CAD 按键、菜单、输入法、焦点和 PICKFIRST 待复测。
 
 已完成：0.1.3 图纸身份修复已独立提交；0.1.4 新增 REBUILDPNTAGBYCLASS。BatchRunGate 覆盖导出、批量检查、重建及异步保存；TagRebuildPolicy 负责预检分类、注册键重号及占用链冲突；TagRebuildBatch 负责单撤销组和逐对象回读；TagRebuildJournal 保存追加历史。SDK 适配位于 PlantTagRebuildAccess，只写 PnId.Tag，支持 SLINE 和管线组；PlantTagCatalogAccess 批量读取 PnPRow.ClassName 并缓存类别、格式和成员关联。
 
@@ -104,7 +104,7 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 
 0.1.29 已完成的 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
 
-未完成：PNFASTPANEL 的真实 CAD 模态所有者、Ctrl+U、输入法、焦点、Enter／Esc 与 PICKFIRST，以及项目显示名的实机对照仍待复测。本轮不操作用户图纸。外参视觉边界继续保持未验证保护。0.1.36 已正式发布并回下载核验；0.1.37 的新增授权为实现和验证，按仓库流程完成本地提交，不扩大为推送或 Release 授权。
+未完成：PNFASTPANEL 的真实 CAD 行移动菜单、Alt 方向键、模态所有者、Ctrl+U、输入法、焦点、Enter／Esc 与 PICKFIRST，以及项目显示名的实机对照仍待复测。本轮不操作用户图纸。外参视觉边界继续保持未验证保护。0.1.36 已正式发布并回下载核验；0.1.37／0.1.38 的新增授权为实现和验证，各版按仓库流程完成本地提交，不扩大为推送或 Release 授权。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 
@@ -121,6 +121,8 @@ PNFASTPANEL 保留 PICKFIRST，由 FastPanelController 管理原生 PaletteSet�
 值草稿保存在行内独立缓冲，与当前编辑票据、行修订、属性路径及原值绑定；同票据的快照重绘保留输入及光标选区，新票据／原值／权限变化立即丢弃。FastSelectionController.Invalidate 在事件发生时撤销视图许可及草稿，隐藏／卸载和移除亦清理；某行提交沿用全局票据失效，其余草稿不重挂到新对象。FastPropertyValue.Placeholder 以结构化状态区分 `*(多种)`、空字符串 `(空白)`、真实 null `(null)`，Dirty 隔离实际输入；不按显示文本猜测。焦点内使用独立叠加提示，焦点外使用占位前景画刷，均只对文字使用 0.5 不透明度，跟随深浅主题与只读颜色；背景、边框、光标、选区不变。真实同文、文字 null、空格、制表符及实际输入保持正常前景和原始内容。SDK 读取不再将 null 合并到空字符串，Raw／票据 Original／预检及写前复核保留 nullable 身份；回读成功的 null 与无法回读分别记录，仍只向 SDK 提交用户的非 null 输入字符串。
 
 统一键值由值格专用 RoutedUICommand 固定 RowId／路径修订／票据／独立 DraftRevision，关闭菜单并延迟排队；改输入、Esc 或失效都会拒绝旧回填，不能覆盖新状态。FastSelectionController 在 Idle 前后通过完整 BlockTableId、项目、选择集合及逐对象原值／权限复核，短锁和事务在 ShowModalWindow 前释放。候选来自完整 EditLease.Contexts.Original，经 PnUnifiedValuePolicy 全量 Ordinal 去重；不读聚合提示，不求值编号。有效确认／取消不 RequestRefresh 或消耗票据，TryApplyUnifiedDraft 只更新草稿并延迟恢复焦点；真正提交继续共用原批次。UnifiedValueView 的可编辑 ComboBox 不自动补全或默认选项，文本框、Popup、选项及按钮使用局部主题资源，Enter／Esc 先消费后结束窗口。
+
+行重排由两列各自的本地 RoutedUICommand 固定所属行和源控件，精确 Alt 修饰键并解析 SystemKey；不注册面板／CAD 全局绑定。移动意图先取消所有已排队的菜单收尾，再在 Dispatcher Input 阶段复用原 PropertyRow、Container 和 TextBox 同步调整列表及视觉树，合并过渡焦点通知，按修订恢复原列选区并 BringIntoView；真隐藏或票据失效取消延迟恢复。移动不触发 RowsChanging／RowsCommitted、SuspendEditing 或 SDK 刷新；ReadSpecs、异步回填、编辑及统一键值按行 ID 识别，属性检索请求按行 ID 核对集合，顺序变化本身不使其过期。不新增配置持久化。
 
 
 文本输入／复制期间由 WPF 焦点事件驱动 PaletteSet.KeepFocus，离开表格或隐藏时释放，属性提交期间保持原焦点。FastSelectionController 在读锁外结合批次、CommandInProgress、IsQuiescent 和表格输入焦点固定忙碌状态，再传入属性适配；事务内不重复查询 IsQuiescent。选择、文档、对象及命令事件立即使轮次失效并撤销值许可及草稿，SDK 查询仍在主线程 Idle 分批读取完整选择。PnPropertyPolicy 归一化自身路径、汇总共同值并保守判断权限，PnPropertyBatch 丢弃旧轮次。完整 BlockTableId、项目身份、行修订和票据共同隔离跨图纸、跨选择及跨属性编辑。多选权限取所有对象的许可交集，任一缺少／只读／未知则整行只读；隐藏或忙碌暂停，关闭及退出解绑。

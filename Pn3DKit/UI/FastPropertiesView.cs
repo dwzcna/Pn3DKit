@@ -35,10 +35,17 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         internal PnPropertyCell? Cell;
     }
     private readonly List<PropertyRow> _rows = [];
+    private sealed record MoveRequest(PropertyRow Row, int Direction, WpfTextBox Box, int Start, int Length, int Caret,
+        long PathRevision, long DraftRevision, long Generation);
+    private readonly HashSet<PropertyRow> _deferredPathBlur = [];
+    private bool _reordering;
+    private long _moveRevision;
     private readonly StackPanel _table = new();
     private readonly ResourceDictionary _controlStyles = FastPanelControlStyles.CreateResources();
     private readonly RoutedUICommand _removePropertyRow = new("移除此属性行", "RemovePropertyRow", typeof(FastPropertiesView));
     private readonly RoutedUICommand _unifyValue = new("统一键值", "UnifyValue", typeof(FastPropertiesView));
+    private readonly RoutedUICommand _moveRowUp = new("上移", "MoveRowUp", typeof(FastPropertiesView));
+    private readonly RoutedUICommand _moveRowDown = new("下移", "MoveRowDown", typeof(FastPropertiesView));
     private PnUnifiedValueRequest? _unifyRequest;
     private int _selectionCount;
     private readonly TextBlock _objectType;
@@ -116,6 +123,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     private void TrackInputFocus(IInputElement? target)
     {
         _observedFocus = target;
+        if (_reordering) return; // 合并移除、重插入及恢复焦点期间的临时通知。
         if (_rows.Any(r => r.MenuOpen || r.MenuOpening)) return; // 临时开启状态有 Dispatcher 收尾，不能永久阻断。
         _focusedInput = target is WpfTextBox box && _rows.Any(r => ReferenceEquals(r.Input, box) || ReferenceEquals(r.Value, box))
             ? box : null;
@@ -189,6 +197,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     internal void SuspendEditing()
     {
         _unifyRequest = null;
+        _moveRevision++; _reordering = false; _deferredPathBlur.Clear(); // 真正失效仍中止延迟焦点恢复。
         SetCatalogAvailability(false, "正在刷新或忙碌，暂不可检索。");
         _updating = true;
         try
@@ -246,7 +255,13 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             row.Value.Text = ""; RowsChanging?.Invoke();
         };
         input.GotKeyboardFocus += (_, _) => _active = row;
-        input.LostKeyboardFocus += (_, e) => { TrackInputFocus(e.NewFocus); if (!row.MenuOpen && !row.MenuOpening) CommitPath(row); };
+        input.LostKeyboardFocus += (_, e) =>
+        {
+            TrackInputFocus(e.NewFocus);
+            if (_reordering) return;
+            if (_rows.Any(r => r.MenuOpen || r.MenuOpening)) _deferredPathBlur.Add(row);
+            else CommitPath(row);
+        };
         input.PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter) { e.Handled = true; CommitPath(row); }
@@ -267,13 +282,14 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         };
         value.TextChanged += (_, _) =>
         {
-            if (!_updating && ReferenceEquals(_focusedInput, value) && !value.IsReadOnly && row.Cell != null)
+            if (!_updating && (ReferenceEquals(_focusedInput, value) || (_reordering && ReferenceEquals(_observedFocus, value)))
+                && !value.IsReadOnly && row.Cell != null)
             { row.Editing = true; row.Dirty = true; row.Draft = value.Text; row.DraftRevision++; UpdatePlaceholder(row); }
         };
         value.LostKeyboardFocus += (_, e) =>
         {
             TrackInputFocus(e.NewFocus);
-            if (row.MenuOpen || row.MenuOpening) return;
+            if (_reordering || row.MenuOpen || row.MenuOpening) return;
             RestoreDisplay(row);
         };
         value.PreviewKeyDown += (_, e) =>
@@ -291,6 +307,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         };
         BindRemoveShortcut(row, input); BindRemoveShortcut(row, value);
         BindUnifyShortcut(row, value);
+        BindMoveShortcuts(row, input); BindMoveShortcuts(row, value);
         input.ContextMenu = RowMenu(row, input); value.ContextMenu = RowMenu(row, value);
         int index = beforeTail && _rows.Count != 0 && IsPlaceholder(_rows[^1]) ? _rows.Count - 1 : _rows.Count;
         _rows.Insert(index, row); _table.Children.Insert(index, container);
@@ -350,6 +367,116 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         args.Handled = true;
         if (_removePropertyRow.CanExecute(null, target)) _removePropertyRow.Execute(null, target);
         return true;
+    }
+
+    /// <summary>仅检查本地行索引和末尾占位边界；不依赖选择、SDK、权限或忙碌状态。</summary>
+    private bool CanMoveRow(PropertyRow row, int direction)
+    {
+        int index = _rows.IndexOf(row);
+        int last = _rows.Count - 1;
+        if (last >= 0 && IsPlaceholder(_rows[last])) last--;
+        return direction is -1 or 1 && index >= 0 && index <= last && !IsPlaceholder(row)
+            && index + direction >= 0 && index + direction <= last;
+    }
+
+    /// <summary>两列各自绑定整行移动；每次路由固定所属行和源控件。</summary>
+    private void BindMoveShortcuts(PropertyRow row, WpfTextBox box)
+    {
+        foreach (var item in new[] { (_moveRowUp, Key.Up, -1), (_moveRowDown, Key.Down, 1) })
+        {
+            int direction = item.Item3;
+            box.CommandBindings.Add(new CommandBinding(item.Item1,
+                (_, e) => { e.Handled = true; RequestMove(row, direction, box); },
+                (_, e) => { e.Handled = true; e.CanExecute = !_reordering && CanMoveRow(row, direction); }));
+            box.InputBindings.Add(new KeyBinding(item.Item1, new KeyGesture(item.Item2, ModifierKeys.Alt)) { CommandTarget = box });
+        }
+        box.PreviewKeyDown += (_, args) => HandleMoveShortcut(args, box, args.KeyboardDevice.Modifiers);
+    }
+
+    /// <summary>Alt 使用 SystemKey 解析；边界及重排中也消费准确组合，不能泄漏到 CAD。</summary>
+    private bool HandleMoveShortcut(System.Windows.Input.KeyEventArgs args, WpfTextBox box, ModifierKeys modifiers)
+    {
+        Key key = args.Key == Key.System ? args.SystemKey : args.Key;
+        if (modifiers != ModifierKeys.Alt || key is not (Key.Up or Key.Down)) return false;
+        args.Handled = true;
+        var command = key == Key.Up ? _moveRowUp : _moveRowDown;
+        if (command.CanExecute(null, box)) command.Execute(null, box);
+        return true;
+    }
+
+    /// <summary>先固定移动意图，再关闭菜单；过渡失焦和菜单收尾不能确认未完成路径。</summary>
+    private void RequestMove(PropertyRow row, int direction, WpfTextBox box)
+    {
+        if (_reordering || !CanMoveRow(row, direction)) return;
+        var request = new MoveRequest(row, direction, box, box.SelectionStart, box.SelectionLength, box.CaretIndex,
+            row.Revision, row.DraftRevision, ++_moveRevision);
+        _reordering = true;
+        // 即使菜单刚关闭，也必须撤销已经排队的收尾，不能在移动后确认 PendingPath。
+        _clearingMenus = true;
+        try
+        {
+            foreach (var owner in _rows)
+            {
+                owner.MenuRevision++;
+                owner.Input.ContextMenu.IsOpen = false; owner.Value.ContextMenu.IsOpen = false;
+                owner.MenuOpen = false; owner.MenuOpening = false;
+            }
+        }
+        finally { _clearingMenus = false; }
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => MoveRow(request)));
+    }
+
+    /// <summary>复用原行和控件调整两份索引；失败时恢复原列表与视觉树，不刷新票据。</summary>
+    private void MoveRow(MoveRequest request)
+    {
+        if (request.Generation != _moveRevision) return;
+        int index = _rows.IndexOf(request.Row), target = index + request.Direction;
+        if (!CanMoveRow(request.Row, request.Direction)) { FinishMoveFocus(request, false); return; }
+        try
+        {
+            if (_table.Children.Count != _rows.Count || !ReferenceEquals(_table.Children[index], request.Row.Container))
+                throw new InvalidOperationException("属性行与显示顺序不一致。");
+            _table.Children.RemoveAt(index);
+            try
+            {
+                _table.Children.Insert(target, request.Row.Container);
+                _rows.RemoveAt(index); _rows.Insert(target, request.Row);
+            }
+            catch
+            {
+                _table.Children.Remove(request.Row.Container); _table.Children.Insert(index, request.Row.Container);
+                _rows.Remove(request.Row); _rows.Insert(index, request.Row);
+                throw;
+            }
+            _active = request.Row; _table.UpdateLayout(); FinishMoveFocus(request, true);
+        }
+        catch (System.Exception ex)
+        {
+            _reordering = false; _deferredPathBlur.Clear(); TrackInputFocus(Keyboard.FocusedElement);
+            ShowStatus("未能移动属性行：" + ex.Message);
+        }
+    }
+
+    /// <summary>只在本轮状态仍有效时恢复同一列的焦点、选区和光标，最后发布真实焦点。</summary>
+    private void FinishMoveFocus(MoveRequest request, bool retry)
+    {
+        if (request.Generation != _moveRevision) return;
+        if (_rows.Contains(request.Row) && request.Row.Revision == request.PathRevision && request.Row.DraftRevision == request.DraftRevision)
+        {
+            bool focused = request.Box.Focus();
+            if (!focused && retry)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => FinishMoveFocus(request, false)));
+                return;
+            }
+            int start = Math.Min(request.Start, request.Box.Text.Length);
+            int length = Math.Min(request.Length, request.Box.Text.Length - start);
+            // 复用控件通常已保留选区方向；仅在改变时恢复，避免 Select 本身移动选择的活动端。
+            if (request.Box.SelectionStart != start || request.Box.SelectionLength != length) request.Box.Select(start, length);
+            if (length == 0 && request.Box.CaretIndex != request.Caret) request.Box.CaretIndex = Math.Min(request.Caret, request.Box.Text.Length);
+            request.Box.BringIntoView();
+        }
+        _reordering = false; _deferredPathBlur.Clear(); TrackInputFocus(Keyboard.FocusedElement);
     }
 
     /// <summary>混合值且全部可写时才开放；只查询面板快照，不在菜单开启时访问 SDK。</summary>
@@ -468,6 +595,12 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
             if (unify != null) unify.ToolTip = Tip(UnifyReason(row) ?? "选择现有值或输入新值，确定只回填草稿，再按 Enter 提交。");
         }
         UpdateUnifyTip();
+        foreach (var move in new[] { ("上移", "Alt+↑", _moveRowUp), ("下移", "Alt+↓", _moveRowDown) })
+        {
+            var item = new MenuItem { Header = move.Item1, InputGestureText = move.Item2, Command = move.Item3,
+                CommandTarget = box, Style = itemStyle, ToolTip = Tip("整行移动一格；末尾空行固定，边界不可越过。") };
+            ToolTipService.SetShowOnDisabled(item, true); menu.Items.Add(item);
+        }
         var remove = new MenuItem
         {
             Header = "移除此属性行", Style = itemStyle, Command = _removePropertyRow,
@@ -476,6 +609,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         menu.Items.Add(remove);
         menu.PreviewKeyDown += (_, e) =>
         {
+            if (HandleMoveShortcut(e, box, e.KeyboardDevice.Modifiers)) return;
             if (ReferenceEquals(box, row.Value) && HandleUnifyShortcut(e, box, e.KeyboardDevice.Modifiers)) menu.IsOpen = false;
             else if (HandleRemoveShortcut(e, box)) menu.IsOpen = false;
         };
@@ -500,7 +634,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
         menu.Closed += (_, _) =>
         {
             row.MenuOpening = false; row.MenuOpen = false;
-            if (_clearingMenus) return;
+            if (_clearingMenus || _reordering) return;
             long revision = ++row.MenuRevision;
             Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
             { if (_rows.Contains(row) && revision == row.MenuRevision && !_clearingMenus) FinishMenu(row); }));
@@ -513,7 +647,14 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     {
         row.MenuOpening = false; row.MenuOpen = false;
         TrackInputFocus(_observedFocus);
+        if (_reordering) return;
         if (!ReferenceEquals(_observedFocus, row.Input)) CommitPath(row);
+        if (!_rows.Any(r => r.MenuOpen || r.MenuOpening))
+        {
+            var deferred = _deferredPathBlur.ToArray(); _deferredPathBlur.Clear();
+            foreach (var pending in deferred)
+                if (!ReferenceEquals(_observedFocus, pending.Input)) CommitPath(pending);
+        }
         RestoreDisplay(row);
     }
 
@@ -560,7 +701,7 @@ internal sealed class FastPropertiesView : System.Windows.Controls.UserControl
     /// <summary>仅回车提交当前票据绑定的草稿；视图不操作 SDK，过期由宿主再次验证。</summary>
     private void CommitValue(PropertyRow row)
     {
-        if (_updating || _clearingMenus || _unifyRequest != null || !_rows.Contains(row) || row.MenuOpen || row.MenuOpening || !row.Editing || !row.Dirty || row.Value.IsReadOnly || row.Cell == null) return;
+        if (_updating || _clearingMenus || _reordering || _unifyRequest != null || !_rows.Contains(row) || row.MenuOpen || row.MenuOpening || !row.Editing || !row.Dirty || row.Value.IsReadOnly || row.Cell == null) return;
         var cell = row.Cell; string value = row.Draft;
         row.Editing = false; row.Dirty = false; row.Draft = ""; row.DraftRevision++; UpdatePlaceholder(row);
         if (cell.Value.Kind == FastValueKind.Value && value == cell.Value.Raw)

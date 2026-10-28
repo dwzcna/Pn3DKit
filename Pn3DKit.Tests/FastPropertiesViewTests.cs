@@ -11,7 +11,7 @@ using Pn3DKit.Utils;
 namespace Pn3DKit.Tests;
 
 /// <summary>在独立 STA 上分发纯 WPF 路由事件，不激活窗口、不连接 CAD 或设置系统焦点。</summary>
-public sealed class FastPropertiesViewTests
+public sealed partial class FastPropertiesViewTests
 {
     private static void Sta(Action action)
     {
@@ -398,7 +398,7 @@ public sealed class FastPropertiesViewTests
         var (view, first, _) = Comment();
         var second = Children<TextBox>(view).Skip(2).First(); second.Text = "Area"; Focus(second, false);
         Focus(first, true);
-        var binding = second.InputBindings.OfType<KeyBinding>().Single();
+        var binding = second.InputBindings.OfType<KeyBinding>().Single(x => x.Key == System.Windows.Input.Key.D);
         ((RoutedCommand)binding.Command).Execute(null, second);
         Assert.Equal(new[] { "Comment", "" }, view.ReadSpecs().Select(x => x.Input));
         Assert.Empty(view.InputBindings); // 只在行内注册，面板空白处及 CAD 不接管 Ctrl+D。
@@ -409,7 +409,7 @@ public sealed class FastPropertiesViewTests
     public void CtrlDPlaceholderCannotBeRemoved() => Sta(() =>
     {
         var view = new FastPropertiesView(); var tail = Children<TextBox>(view).First();
-        var command = (RoutedCommand)tail.InputBindings.OfType<KeyBinding>().Single().Command;
+        var command = (RoutedCommand)tail.InputBindings.OfType<KeyBinding>().Single(x => x.Key == System.Windows.Input.Key.D).Command;
         Assert.False(command.CanExecute(null, tail)); command.Execute(null, tail);
         Assert.Single(view.ReadSpecs()); Assert.Equal("", view.ReadSpecs()[0].Input);
     });
