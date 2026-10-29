@@ -185,11 +185,9 @@ public sealed class TagRebuildCommands
             });
             if (save)
             {
-                string internalDirectory = Path.Combine(Path.GetDirectoryName(journal!.LogPath)!, "_internal");
-                files.EnsureDirectory(internalDirectory);
                 await TagRebuildSave.RunAsync(true, true,
-                    () => host.SaveAsync(original, Path.Combine(internalDirectory, "save-" + Guid.NewGuid().ToString("N") + ".done")),
-                    async () => (await host.ReadStateAsync(original)).Modified, journal);
+                    () => host.SaveAsync(original),
+                    async () => (await host.ReadStateAsync(original)).Modified, journal!);
                 Write("图纸已保存。");
             }
         }

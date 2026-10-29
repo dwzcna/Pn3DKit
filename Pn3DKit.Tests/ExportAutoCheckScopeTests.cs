@@ -129,7 +129,7 @@ public sealed class ExportAutoCheckScopeTests
     /// <summary>超时或清理未知时不读取也不恢复，避免原生命令仍运行时重新启用检查。</summary>
     [Theory]
     [InlineData("原生命令可能仍运行")]
-    [InlineData("LISP 等待器清理失败")]
+    [InlineData("原生命令监听清理失败")]
     public void UnknownNativeStateKeepsCheckerDisabledWithoutSdkAccess(string reason)
     {
         var variable = new Variable(); var scope = variable.Scope(); scope.Disable();

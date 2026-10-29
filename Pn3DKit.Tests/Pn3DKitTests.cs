@@ -79,33 +79,42 @@ public sealed partial class Pn3DKitTests
         Assert.Throws<ArgumentException>(() => ExportPolicy.ExportArguments("output.dwg", "2000"));
     }
 
-    /// <summary>LISP 使用三项 Plant 命令参数，正确保留中文与空格路径。</summary>
-    [Theory]
-    [InlineData("2013", "_2013(LT2013)")]
-    [InlineData("2018", "_2018(LT2018)")]
-    public void LispExportUsesPlantPromptOrderAndRestoresVariables(string version, string keyword)
+    /// <summary>Plant原生命令拒绝前导点文件名；临时输出保持普通DWG文件名和隔离发布。</summary>
+    [Fact]
+    public async Task TemporaryDwgUsesPlantCompatibleName()
     {
-        string command = CadLispCommands.Export(@"C:\输出\PID DWG\a.dwg", @"C:\日志\done.txt", version);
-        Assert.Contains("(vl-catch-all-apply 'command-s (list \"_.-EXPORTTOAUTOCAD\" \"" + keyword + "\" \"C:\\\\输出\\\\PID DWG\\\\a.dwg\"))", command);
-        Assert.DoesNotContain("\"_F\"", command);
-        Assert.DoesNotContain("\"\"", command);
-        Assert.Contains("(setvar \"FILEDIA\" fd)", command);
-        Assert.Contains("(setvar \"CMDDIA\" cd)", command);
-        Assert.Contains("(setvar \"PROXYNOTICE\" pn)", command);
-        Assert.Contains("\"DONE\"", command);
-        Assert.Contains("\"ERROR: \"", command);
-        Assert.Contains("(close h)", command);
+        using var fixture = new Fixture();
+        fixture.Add("source.dwg");
+        var result = await fixture.Run();
+        Assert.Equal("Exported", result.Items[0].Status);
+        Assert.StartsWith("Pn3DKit_temp_", Path.GetFileName(fixture.Host.LastTemporary));
+        Assert.Equal(".dwg", Path.GetExtension(fixture.Host.LastTemporary));
+        Assert.NotEqual(result.Items[0].Destination, fixture.Host.LastTemporary);
     }
 
-    /// <summary>独立保存表达式不混入导出，并正确转义路径引号及拒绝空字符。</summary>
-    [Fact]
-    public void LispSaveIsIndependentAndEscapesQuotedPaths()
+    /// <summary>真实SDK确认132成功、133失败；长度边界在调用CAD前检查。</summary>
+    [Theory] [InlineData(132, true)] [InlineData(133, false)]
+    public void PlantExportPathHasVerifiedLimit(int length, bool accepted)
     {
-        string command = CadLispCommands.Save(@"C:\logs\save.status.txt");
-        Assert.Contains("(list \"_.QSAVE\")", command);
-        Assert.DoesNotContain("EXPORTTOAUTOCAD", command);
-        Assert.Equal("\"a\\\"b\\\\c\"", CadLispCommands.Quote("a\"b\\c"));
-        Assert.Throws<ArgumentException>(() => CadLispCommands.Quote("bad\0path"));
+        string path = @"C:\" + new string('a', length - 7) + ".dwg";
+        Assert.Equal(length, path.Length);
+        if (accepted) ExportPolicy.ValidatePlantExportPath(path);
+        else Assert.Throws<PathTooLongException>(() => ExportPolicy.ValidatePlantExportPath(path));
+    }
+
+    /// <summary>过长的临时输出在打开和QSAVE前拒绝；不进入原生输入重试。</summary>
+    [Fact]
+    public async Task LongPlantOutputNeverOpensOrSavesSource()
+    {
+        using var fixture = new Fixture();
+        fixture.Add("source.dwg", modified: true);
+        var options = fixture.Options() with { OutputDirectory = Path.Combine(fixture.Root, new string('a', 70)) };
+        var result = await new BatchExporter().RunAsync(new(fixture.Project, fixture.Sources, null),
+            options, fixture.Host, _ => { });
+        Assert.Equal("Failed", result.Items[0].Status);
+        Assert.Contains("132", result.Items[0].Message);
+        Assert.Empty(fixture.Host.Opened);
+        Assert.Equal(0, fixture.Host.Saves); Assert.Equal(0, fixture.Host.Exports);
     }
 
     /// <summary>实际 DWG 版本与选择不符时保留临时输出，不发布正式文件。</summary>
@@ -477,7 +486,7 @@ public sealed partial class Pn3DKitTests
     /// <summary>创建本测试独享的临时项目，结束时清理，不接触实际用户目录。</summary>
     private sealed class Fixture : IDisposable
     {
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "Pn3DKit.Tests", Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "Pn3DKit.Tests", Guid.NewGuid().ToString("N")[..8]);
         internal string Project => Path.Combine(Root, "project");
         internal List<string> Sources { get; } = [];
         internal FakeHost Host { get; } = new();
@@ -493,8 +502,8 @@ public sealed partial class Pn3DKitTests
             if (alreadyOpen) Host.Existing.Add(source);
             return source;
         }
-        internal BatchOptions Options(bool save = true) => new(ProjectPartKind.PnId, save, "2013",
-            ExportPolicy.SuggestDirectory(Root, new DateTime(2026, 10, 24, 15, 30, 45)));
+        // 生命周期夹具使用短输出；建议目录策略由专属用例验证，保留SDK路径预算给外部图纸映射。
+        internal BatchOptions Options(bool save = true) => new(ProjectPartKind.PnId, save, "2013", Path.Combine(Root, "output"));
         internal Task<BatchResult> Run(bool save = true, CancellationToken token = default) =>
             new BatchExporter().RunAsync(new(Project, Sources.ToArray(), null), Options(save), Host, _ => { }, token);
         public void Dispose()
@@ -557,7 +566,7 @@ public sealed partial class Pn3DKitTests
             AfterStateRead?.Invoke(++_stateReads);
             return Task.FromResult(new DrawingState(fake.Modified, fake.ReadOnly));
         }
-        public Task SaveAsync(ICadDrawing drawing, string marker)
+        public Task SaveAsync(ICadDrawing drawing)
         {
             BeforeOperation?.Invoke("Save");
             Saves++;
@@ -565,7 +574,7 @@ public sealed partial class Pn3DKitTests
             if (SaveClearsDirty) ((FakeDrawing)drawing).Modified = false;
             return Task.CompletedTask;
         }
-        public Task ExportAsync(ICadDrawing drawing, string temporary, string version, string marker)
+        public Task ExportAsync(ICadDrawing drawing, string temporary, string version)
         {
             BeforeOperation?.Invoke("Export");
             Exports++;

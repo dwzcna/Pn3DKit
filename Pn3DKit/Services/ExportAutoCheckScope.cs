@@ -6,7 +6,7 @@ namespace Pn3DKit.Services;
 /// <remarks>不实现自动 Dispose，必须在原生操作收尾后根据状态明确决定是否恢复。</remarks>
 internal sealed class ExportAutoCheckScope(Func<object?> read, Action<object> write)
 {
-    internal const string VariableName = "PLANTDWGCHECKERAUTOCHECK";
+    internal const string VariableName = "DWGCHECKERAUTOCHECKSWITCH";
     private readonly int _threadId = Environment.CurrentManagedThreadId;
     private object? _original;
     private long _originalNumber;
@@ -66,7 +66,7 @@ internal sealed class ExportAutoCheckScope(Func<object?> read, Action<object> wr
     /// <summary>只接受 SDK 的整数值，拒绝 null、文本及被取整后伪装为零的小数。</summary>
     private static long Integer(object? value) => value is sbyte or byte or short or ushort or int or uint or long or ulong
         ? Convert.ToInt64(value, CultureInfo.InvariantCulture)
-        : throw new InvalidOperationException("系统变量未返回可识别的整数值。");
+        : throw new InvalidOperationException("自动检查配置未返回可识别的整数值。");
 
     /// <summary>保证设置与恢复在创建保护时的 CAD 主线程执行。</summary>
     private void VerifyThread()

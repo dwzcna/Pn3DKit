@@ -35,7 +35,7 @@ public sealed class BatchExporter
         try
         {
             Report("输出目录：" + directory);
-            Report("执行方式：LISP command-s；等待完成标记、LISP 结束及 CAD 空闲后处理输出。");
+            Report("执行方式：Editor.CommandAsync；等待命令返回、CAD 空闲及监听清理后处理输出。");
             Report($"图纸类型：{options.Part}，格式：{options.Version}，共 {jobs.Count} 张。");
             foreach (var job in jobs)
             {
@@ -44,8 +44,6 @@ public sealed class BatchExporter
                 ICadDrawing? document = null;
                 bool opened = false, safe = true, stop = false;
                 string status = "Failed", message = "", temporary = "";
-                string marker = Path.Combine(directory, ".pn3dkit-logs", $"{results.Count + 1:D5}.status.txt");
-                string saveMarker = Path.Combine(directory, ".pn3dkit-logs", $"{results.Count + 1:D5}.qsave.status.txt");
                 try
                 {
                     Report($"[{results.Count + 1}/{jobs.Count}] {job.Source}");
@@ -53,8 +51,6 @@ public sealed class BatchExporter
                     ExportPolicy.RejectLinks(Path.GetDirectoryName(job.Destination)!);
                     ExportPolicy.ValidateCadPath(job.Source);
                     ExportPolicy.ValidateCadPath(job.Destination);
-                    ExportPolicy.ValidateCadPath(marker);
-                    ExportPolicy.ValidateCadPath(saveMarker);
                     if (!File.Exists(job.Source)) throw new FileNotFoundException("源图不存在。", job.Source);
                     if (File.Exists(job.Destination) || Directory.Exists(job.Destination))
                     {
@@ -65,9 +61,9 @@ public sealed class BatchExporter
                     {
                         string outputDirectory = Path.GetDirectoryName(job.Destination)!;
                         Directory.CreateDirectory(outputDirectory);
-                        do { temporary = Path.Combine(outputDirectory, ".__pn3d_" + Guid.NewGuid().ToString("N")[..8] + ".dwg"); }
+                        do { temporary = Path.Combine(outputDirectory, "Pn3DKit_temp_" + Guid.NewGuid().ToString("N")[..8] + ".dwg"); }
                         while (File.Exists(temporary) || Directory.Exists(temporary));
-                        ExportPolicy.ValidateCadPath(temporary);
+                        ExportPolicy.ValidatePlantExportPath(temporary);
                         token.ThrowIfCancellationRequested();
                         document = host.FindOpen(job.Source);
                         if (document == null)
@@ -97,7 +93,7 @@ public sealed class BatchExporter
                                 host.EnsureProject();
                                 Report("执行一次 QSAVE：" + job.Source);
                                 safe = false;
-                                await host.SaveAsync(document, saveMarker);
+                                await host.SaveAsync(document);
                                 state = await host.ReadStateAsync(document);
                                 safe = true;
                                 if (state.Modified) throw new IOException("QSAVE 后仍有未保存修改，未导出。");
@@ -105,7 +101,7 @@ public sealed class BatchExporter
                             token.ThrowIfCancellationRequested();
                             host.EnsureProject();
                             safe = false;
-                            await host.ExportAsync(document, temporary, options.Version, marker);
+                            await host.ExportAsync(document, temporary, options.Version);
                             safe = true;
                             token.ThrowIfCancellationRequested();
                             host.EnsureProject();

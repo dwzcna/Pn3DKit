@@ -33,10 +33,10 @@ GitHub Actions 忽略本机 user 属性，下载并直接解压官方 SDK 到 ar
 ./build/Build-Pn3DKit.ps1
 
 # DLL 已被 CAD 加载时使用独立输出
-./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.46 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.46
+./build/Build-Pn3DKit.ps1 -BuildOutputRoot artifacts/plugin-build/0.1.47 -OutputDirectory artifacts/plugins/Pn3DKit/0.1.47
 
 # 复用上述已校验的构建
-./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.46 -OutputDirectory artifacts/release/0.1.46
+./build/Publish.ps1 -NoBuild -InputDirectory artifacts/plugins/Pn3DKit/0.1.47 -OutputDirectory artifacts/release/0.1.47
 ```
 
 Pn3DKit.Tests 链接 Models、Services、Utils、WPF 视图和外参来源代码，不加载 Autodesk；SDK 替身仅验证来源与生命周期。build/CadVisualPrototype、CadVisualHost、CadVisualProbe 是独立原生验证项目，不加入产品解决方案或单 DLL 载荷；使用授权目录及实例，不调用 Computer Use、不更改 CAD 安全设置。
@@ -71,7 +71,7 @@ XrefBlockProgress 不依赖 Autodesk，按主线程检查点和 TimeProvider 每
 
 XrefBlockCadCatalog 先用 IndexReferences 发现附着／覆盖来源并冻结 SourceState 清单，再逐图 IndexNames。关系和名称阶段各枚举一次块表，来源数据库和引用链缓存复用，不重复装载源文件；ReferenceStamp 保存完整对象身份、路径、加载身份和覆盖状态，两阶段之间变化则停止。名称阶段才创建 GUID 清单并分配 dwgNo，表头先于该阶段块表读取，50 行／1 秒写出保持。sourceFound 回调报告已确认来源数，scanStarted 回调在表头刷新后报告序号／固定总数；原 progress 回调仍是累计名称行数。CaptureNames 包含已发现但 DwgNo=0 的未扫描来源，LOG 不将其视为空图纸。
 
-候选通过 LocateVisual／VerifyVisual 核对来源、目标名称、完整数据库身份和磁盘状态，XrefBlockVisualPreparation 为每个候选来源建立隔离临时库。只读来源保留到比较结束后释放，宿主数据库不释放；实际命令不调用 ReadDefinition 或旧字段读取器，无候选零绘制。
+候选通过 LocateVisual／VerifyVisual 核对来源、目标名称、完整数据库身份和磁盘状态，XrefBlockVisualPreparation 为每个候选来源建立隔离临时库。只读来源保留到比较结束后释放，宿主数据库不释放；产品不再包含旧字段读取器，无候选零绘制。
 
 专用 XrefBlockVisualSession 在 CAD 主线程串行准备及绘制，公共 WCS 俯视正交取景、2048×2048 双背景；解析有效颜色／透明度／线宽，多线宽使用同组编码色表。原生后端不能确认的非连续线型、遮罩、重叠异色排序及复杂类型明确未验证。AcDbMgdBrep 不恢复，仍为九个不复制 SDK 参考。
 
@@ -90,21 +90,22 @@ XrefBlockVisualBatch 每个候选报告刷新成功才登记完成；取消、�
 3. 推送 v版本号 标签时核对源码版本，全部通过后创建正式 GitHub Release。
 4. 仅发布任务具有 contents: write。ZIP 只包含 Pn3DKit.dll、README.md、内部 SHA256SUMS，不包含 SDK、测试、符号或运行时。
 
-正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.46/。
+正式资产为 DLL、Pn3DKit-版本-AutoCAD2026-x64.zip 和 SHA256SUMS。Release 说明从 Changlog.md 当前版本提取。本轮验证日志保存在 artifacts/validation/0.1.47/。
 
 ## 当前实现与验收
 
-0.1.46 项目写后只更新本行索引，写前优先注册表并以SDK过滤查询当前占用；从范围内管线反查组，批次租约内缓存纯格式片段及元数据副本。Sdk值、权限、求值不缓存。CadMaintenanceProbe 为独立SDK验证入口，不进入交付；实际筛选与关系逆查待CAD空闲后验收，发布前必须完成。证据 artifacts/validation/0.1.46/。
+已完成：项目写后增量更新索引、写前SDK查询、范围管线逆查组、批次纯格式缓存；多选局部复核和类型化回读；旧字段比较删除、WPF目录选择器、视觉内存和空间筛选优化。0.1.47候选已替换原生命令、修正自动检查配置和Unicode筛选。
+
+已测试：两配置各963项离线回归；真实视觉33项／49次绘制；最终生产过滤函数真实SDK12项；原生命令原型11项含实际Esc；最终生产命令9项及独立COM空闲核验；WPF目录CAD所有者及取消；真实Plant多选写入、数值01→1、严格文本、4个对象事件、选择保持及管线组逆查。OPEN边界修正后应用及文档均空闲，不再需要用户Esc；产品不自动发送取消。路径132成功／133失败且旧LISP同样受限，已增加打开／保存前预检，撤回前导点归因。证据见Changlog.md和artifacts/validation/0.1.47/。
 
 已完成：0.1.3 图纸身份修复已独立提交；0.1.4 新增 REBUILDPNTAGBYCLASS。BatchRunGate 覆盖导出、批量检查、重建及异步保存；TagRebuildPolicy 负责预检分类、注册键重号及占用链冲突；TagRebuildBatch 负责单撤销组和逐对象回读；TagRebuildJournal 保存追加历史。SDK 适配位于 PlantTagRebuildAccess，只写 PnId.Tag，支持 SLINE 和管线组；PlantTagCatalogAccess 批量读取 PnPRow.ClassName 并缓存类别、格式和成员关联。
 
 已测试：离线策略、Fake Host 生命周期、默认否、冲突、数据行别名、日志、保存等待及异常收尾；插件通过双配置构建和十条命令元数据校验，实际结果见 Changlog.md 和 validation 日志。
 
-0.1.34 双配置构建零警告、零错误，各 740 项离线回归通过；版本／十命令／九参考／.NET 8／AMD64／单 DLL、ZIP 和内外 SHA-256 校验通过。正式候选 DLL 原生 32 项通过，包含不能可靠绘制内容的未验证保护、实际像素归组与 PNG、正负行向。实际 11 来源／684 名称／103 候选均写出未验证，不能据此宣称整体 DWG 比较准确性通过。证据 artifacts/validation/0.1.34/，候选 artifacts/release/0.1.34/；本版只本地提交。
+历史验证及已替代实现见Changlog.md对应版本，不作为本轮通过证据。
 
-0.1.29 已完成的 25 项数字格式化回归，覆盖 SDK 回调路由、已读原值、302／303／2→002、相邻 H、原自动编号、空返回、SDK 错误／取消及重建预检拒绝；两配置各 507 项通过，插件 Debug／Release 零警告、零错误。离线回调模拟不等同于 SDK 在 CAD 中的实际输出，仍需对照真实 LoopNumber 及相邻 Feature 的格式拆分。
 
-未完成：PNDWGEXPORT 的真实 Plant 自动检查提示、保存弹窗和崩溃复现，PNFASTPANEL 的首次浮动、手动停靠后重开、行移动、Alt 方向键、模态所有者、Ctrl+U、输入法、焦点、Enter／Esc 与 PICKFIRST，以及项目显示名的实机对照仍待复测。本轮不操作用户图纸。外参视觉边界继续保持未验证保护。本轮按 0.1.41–0.1.47 顺序逐版验证与本地提交，全部完成及必要 CAD 验收通过后统一推送并发布 v0.1.47。
+未完成：PNFASTPANEL原生焦点、首次浮动、菜单与输入法、Plant缓存撤销及用户项目注释等具体场景复测。上述专用副本验收不扩大产品支持边界。所有实际操作只针对核对PID的Plant 3D工具项目副本，另开的普通AutoCAD未操作；不保存用户原图、不使用Computer Use。源码及必要真实验收通过后提交0.1.47，并按授权统一推送、发布v0.1.47。
 
 存在的问题：无法以离线测试确认 Plant 缓存撤销、组 Tag 持久化与注释刷新；缺少注册表时按本图关联行保守检查，索引不完整禁止写入。Piping 管线号继续跳过。
 
@@ -114,9 +115,9 @@ RibbonController 在“Pn3D工具箱”中按顺序创建快速操作、位号�
 
 类别名称适配分在 PlantTagCatalogNames.cs（PlantTagCatalogAccess 的 partial），必须接收所属 Project。CAD 主线程先调用 part.GetClassDisplayName(className)，项目名称空白或普通读取错误时再读 db.Tables[className].GetTableAttributeValue(PnPDatabase.DisplayNameAttribute)，最终回退内部类名。OperationCanceledException 和 SDK UserBreak 继续中止；每级独立处理，项目读取成功不访问表。批量 Read 传已有 part，面板传 context.Part；名称缓存仍按项目部分与实际类别。四个本图／项目检查和重建清单共用扫描结果，DisplayName 仅用于标题和排序，不改变 ClassName、格式、身份或写入。
 
-RunPaths 统一以系统文档目录生成 Pn3DKit/用途/时间戳。RunLogFiles 在 CreateNew 成功后登记文件归属，记录本批新建末级目录和原生独占标记；所有流关闭并封存后才可按清单删除，不递归清理。LogRetentionPolicy 根据结构化最终结果判断默认值；LogRetentionPrompt 在命令末尾处理 Y／N／Esc，Session 入口通过当前文档命令上下文交互，批次租约覆盖清理。AutoCadHost 在原生回调状态未知或等待器清理失败时保护本批现场；普通错误仍可在安全交互时明确选择 N。该流程不接触离线验证产物。
+RunPaths 统一以系统文档目录生成 Pn3DKit/用途/时间戳。RunLogFiles 在 CreateNew 成功后登记文件归属，记录本批新建末级目录；所有流关闭并封存后才可按清单删除，不递归清理。LogRetentionPolicy 根据结构化最终结果判断默认值；LogRetentionPrompt 在命令末尾处理 Y／N／Esc，Session 入口通过当前文档命令上下文交互，批次租约覆盖清理。AutoCadHost 在原生回调状态未知或命令监听清理失败时保护本批现场；普通错误仍可在安全交互时明确选择 N。该流程不接触离线验证产物。
 
-PNDWGEXPORT 的 ExportAutoCheckScope 由入口在批次互斥及活动图纸确认后、项目读取前开始，使用主线程 Get／SetSystemVariable 委托记录真实整数原值、设置 0 并回读。设置尝试前登记恢复责任，涵盖 SDK 已改值后抛错；读取／写入／确认失败停止，初始化异常仍走 finally 恢复。保护跨越所有逐图和原生等待，不加入 AutoCadHost 或 CadLispCommands 的单次对话框恢复列表。入口在原生任务及等待器收尾后、LogRetentionPrompt 前执行 Finish；RunLogFiles.ProtectionReason 非空则不接触 SDK，不恢复，主线程错误或恢复回读失败返回独立结果并 Protect。命令行展示关闭和恢复结果；原始批次异常保留，环境和日志清理异常均在 async void 入口捕获。保护仅供导出使用，不改变其他命令。
+PNDWGEXPORT的ExportAutoCheckScope在互斥和活动图纸确认后、项目读取前开始。PlantAutoCheckEnvironment使用accore.dll公开acedGetEnv／acedSetEnv访问DWGCHECKERAUTOCHECKSWITCH；缺省按有效1，原始有效整数由作用域记录，设置尝试前登记恢复责任。原生操作及监听结束后、日志保留询问前恢复回读；ProtectionReason非空则保持关闭，恢复失败独立报告，不覆盖原始错误。其他命令不使用该保护，FILEDIA／CMDDIA／PROXYNOTICE按安全的单次原生命令恢复。
 
 PNFASTPANEL 保留 PICKFIRST，由 FastPanelController 管理原生 PaletteSet。首次创建在 Visible=true 后设置 DockSides.None，覆盖宿主恢复的旧停靠；复用分支只显示、激活，不重设位置。GUID、左右 DockEnabled、320×480 DIP 初始尺寸和 280×300 DIP 最小尺寸沿用原值。FastPropertiesView 使用连续的 Pn属性／值两列，默认一空行；属性行可增删改，路径列始终可编辑。路径输入立即撤销旧行许可，回车或失焦才读取；值仅回车提交，失焦、Tab、切换行及菜单结束均保留草稿，Esc 撤销当前格输入。UI 不持有 SDK 对象，模型不引用 Autodesk。
 
@@ -131,7 +132,7 @@ PNFASTPANEL 保留 PICKFIRST，由 FastPanelController 管理原生 PaletteSet�
 
 FastPlantPropertiesAccess 直接读取 TargetObject 对应的数据行列，不展开关系或回退改写其他列。权限与提交前的类型、长度校验统一通过 FindEffectiveColumn 解析 table.AllColumns，包含继承字段；列约束仍从实际类别的 GetColumnAttributeNames／GetColumnAttribute 读取，保留类别覆盖。不得改回仅含本类定义的 Columns，否则继承的 Comment、Area 会被误判缺少元数据。权限包括 PnPColumn 的只读／系统／计数／自动生成／表达式／扩展／唯一性、明确列约束、IsAcquisitionProperty／GetAcquisitionStatus、Project.ReadOnly、图纸只读、读写登记、图层锁定和批次状态。PnPropertyMetadataPolicy 是实际 SDK 适配调用的纯策略：描述性元数据不判只读、不额外查询其值；必要约束无法解析或读取失败时只读。非获取字段不查询获取状态，普通字段不读取或拆分 Tag 格式；Tag 单独校验有效格式和注册表。Tag 限有有效格式和注册表的非临时 PnId 普通元件；管线、组、Piping 和缺少注册表时只读。
 
-每次值提交通过共用 BatchRunGate 持有互斥，通过 AutoCadHost.InLockedDocumentAsync 在主线程应用上下文锁定当前文档，保留 PICKFIRST 与焦点，不启动 CAD 命令。多目标票据记录完整 ObjectId 集合、逐对象数据关联及原值。PnPropertyEditPolicy 忽略选择顺序但拒绝增减、过期、原值或权限变化；PnPropertyEditBatch 先对全部目标 Prepare，再检查项目／批内注册键冲突，预检通过后逐数据行写入并回读，别名只写一次。实际错误立即停止，结果保留逐项句柄、原值、新值、实际值和 SDK 状态；不假定回滚。每步完整 Capture 区分写入带来的刷新与非预期目标变化，结束后统一 Regen，刷新失败单独报告。不保存、不生成编号、不改变获取模式、不全局提交项目数据；DWG／Plant 缓存撤销待实机验证。
+每次值提交通过共用 BatchRunGate 持有互斥，通过 AutoCadHost.InLockedDocumentAsync 在主线程应用上下文锁定当前文档，保留 PICKFIRST 与焦点，不启动 CAD 命令。多目标票据记录完整 ObjectId 集合、逐对象数据关联及原值。PnPropertyEditPolicy 忽略选择顺序但拒绝增减、过期、原值或权限变化；PnPropertyEditBatch 先对全部目标 Prepare，再检查项目／批内注册键冲突，预检通过后逐数据行写入并回读，别名只写一次。实际错误立即停止，结果保留逐项句柄、原值、新值、实际值和 SDK 状态；不假定回滚。预检、确认前及最终全量复核，逐数据行重读当前组；写入事件按关联目标复核，未知变化回退全量检查，结束后统一 Regen，刷新失败单独报告。不保存、不生成编号、不改变获取模式、不全局提交项目数据；DWG／Plant 缓存撤销待实机验证。
 
 FastPropertiesView 沿用蓝灰／灰白动态画刷、原生停靠和高 DPI。值列使用独立样式，正常背景／文字置于 Setter，IsReadOnly 触发器切换专用灰色动态资源，避免局部值遮蔽；保持 IsEnabled=true，保留焦点、选择复制和 Tooltip。无有效票据等所有实际只读状态均灰显，恢复许可及深浅主题切换自动更新。表格最小行高 24 DIP，上下内边距 3 DIP，字号仍为 12，自动高度避免裁切。纯 WPF 离屏宿主使用合成数据，不加载 Autodesk；十条命令、单 DLL。面板保留末尾自动空行和右键移除；菜单借用焦点不提交，移除前撤销草稿与票据。菜单 MenuOpen 仅表示实际打开；ContextMenuOpening 的临时状态在 Dispatcher 确认，取消开启及关闭／隐藏／卸载均清理。混合值输入缓冲和提示分离，只有实际输入或明确删除才产生脏态；保留既有身份校验。
 

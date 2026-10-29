@@ -2,7 +2,7 @@ using Pn3DKit.Utils;
 
 namespace Pn3DKit.Services;
 
-/// <summary>本批日志的明确归属清单；只登记成功创建的文件和本次命令独占的原生完成标记。</summary>
+/// <summary>本批日志的明确归属清单；只登记成功创建的文件。</summary>
 /// <remarks>主线程串行使用；关闭全部文件且确认操作结束后才允许删除，不递归清理目录。</remarks>
 public sealed class RunLogFiles
 {
@@ -48,13 +48,6 @@ public sealed class RunLogFiles
         var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         _files.Add(path); _streams.Add(stream);
         return stream;
-    }
-    /// <summary>仅在已拒绝同名标记后登记原生操作的独占输出，未知状态须调用 Protect。</summary>
-    public void ExpectNativeFile(string path)
-    {
-        path = Validate(path);
-        if (File.Exists(path) || Directory.Exists(path)) throw new IOException("原生完成标记已存在：" + path);
-        _files.Add(path);
     }
     /// <summary>同目录发布报告成功后才登记目标；移动失败不认领已有目标。</summary>
     public void Publish(string temporary, string destination)
@@ -107,7 +100,7 @@ public sealed class RunLogFiles
     {
         path = ExportPolicy.Normalize(path);
         string extension = Path.GetExtension(path).ToLowerInvariant();
-        if (extension is not (".log" or ".csv" or ".json" or ".jsonl" or ".tmp" or ".txt" or ".done" or ".lsp"))
+        if (extension is not (".log" or ".csv" or ".json" or ".jsonl" or ".tmp" or ".txt"))
             throw new ArgumentException("只能登记日志、报告或命令诊断文件：" + path);
         ExportPolicy.RejectLinks(path);
         return path;

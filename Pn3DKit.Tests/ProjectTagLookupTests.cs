@@ -13,6 +13,32 @@ public sealed class ProjectTagLookupTests
     [InlineData("", "Tag = ''")]
     public void FilterEscapesLiteral(string value, string filter) => Assert.Equal(filter, ProjectTagLookup.Filter(value));
 
+    /// <summary>非ASCII大小写字符扩大候选，通配符、引号及反斜杠保持字面量。</summary>
+    [Theory]
+    [InlineData("Ä1", "Tag LIKE '_1' ESCAPE '\\'")]
+    [InlineData("Ι1", "Tag LIKE '_1' ESCAPE '\\'")]
+    [InlineData("𐐀1", "Tag LIKE '_1' ESCAPE '\\'")]
+    [InlineData("Ä%_[1]'\\x", "Tag LIKE '_\\%\\_[1]''\\\\x' ESCAPE '\\'")]
+    public void UnicodeCaseCandidatesAreWidened(string tag, string filter) =>
+        Assert.Equal(filter, ProjectTagLookup.Filter(tag));
+
+    /// <summary>扩大结果仍严格按OrdinalIgnoreCase去重并排除自身，不能把通配命中当占用。</summary>
+    [Fact]
+    public void UnicodeCandidateResultsAreRechecked()
+    {
+        var rows = new[] { (1, "Ä1"), (2, "ä1"), (2, "Ä1"), (3, "B1"), (4, "ä2") };
+        Assert.Equal(new[] { 2 }, ProjectTagLookup.Owners("Ä1", 1, _ => rows));
+    }
+
+    /// <summary>非法UTF16和NUL在调用SDK前拒绝，不使用替代字符查询。</summary>
+    [Fact]
+    public void InvalidUnicodeNeverReachesSdk()
+    {
+        foreach (string tag in new[] { "V\0", "V\ud800", "\udc00" })
+            Assert.Throws<ArgumentException>(() => ProjectTagLookup.Owners(tag, 0,
+                _ => throw new InvalidOperationException("不得查询SDK")));
+    }
+
     /// <summary>SDK 查询结果必须再核对 Tag、去掉自身和继承表重复。</summary>
     [Fact]
     public void OwnersAreCurrentFilteredAndDeduplicated()

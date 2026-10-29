@@ -128,19 +128,8 @@ public sealed class LogRetentionTests : IDisposable
     [Fact] public void UnknownNativeOperationIsProtected()
     {
         var files = new RunLogFiles(); using (files.CreateNew(FilePath("run.log"))) { }
-        files.ExpectNativeFile(FilePath("command.done"));
         files.Protect("still running"); files.Seal();
         Assert.Equal(0, files.Delete().Deleted);
-    }
-
-    /// <summary>完成标记与 LISP 只按登记路径清理，原生同名标记冲突不会被认领。</summary>
-    [Fact] public void CompletedNativeFilesAreOwned()
-    {
-        var files = new RunLogFiles(); string marker = FilePath("qsave.done");
-        files.ExpectNativeFile(marker); System.IO.File.WriteAllText(marker, "DONE");
-        using (files.CreateNew(FilePath("qsave.command.lsp"))) { }
-        Assert.Throws<IOException>(() => files.ExpectNativeFile(marker));
-        files.Seal(); Assert.Equal(2, files.Delete().Deleted);
     }
 
     /// <summary>报告发布失败不删除已有正式报告。</summary>

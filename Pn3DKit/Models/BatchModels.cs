@@ -32,7 +32,7 @@ public sealed record BatchResult(int Total, IReadOnlyList<DrawingResult> Items,
     public string Summary => $"成功 {Items.Count(x => x.Status == "Exported")}，跳过 {Items.Count(x => x.Status == "Skipped")}，失败 {Items.Count(x => x.Status == "Failed")}，取消 {Items.Count(x => x.Status == "Canceled")}，未处理 {Total - Items.Count}。";
 }
 
-/// <summary>保存目标文档在自身命令上下文中读取的修改及只读状态。</summary>
+/// <summary>保存主线程在目标文档短锁内读取的修改及只读状态。</summary>
 public sealed record DrawingState(bool Modified, bool ReadOnly);
 
 /// <summary>标识宿主持有的文档；此接口不拥有 CAD 文档的生命周期。</summary>
@@ -52,12 +52,12 @@ public interface ICadHost
     Task<ICadDrawing> OpenAsync(string source);
     /// <summary>在应用上下文激活指定文档。</summary>
     Task ActivateAsync(ICadDrawing drawing);
-    /// <summary>在目标文档命令上下文检查修改和只读状态。</summary>
+    /// <summary>主线程在应用上下文和短文档锁内检查状态，不启动CAD命令。</summary>
     Task<DrawingState> ReadStateAsync(ICadDrawing drawing);
-    /// <summary>提交独立 LISP 执行一次 QSAVE；收到结束标记且 CAD 空闲后完成任务。</summary>
-    Task SaveAsync(ICadDrawing drawing, string marker);
-    /// <summary>通过 LISP 导出临时文件，等待命令与清理完成；失败不得发布正式输出。</summary>
-    Task ExportAsync(ICadDrawing drawing, string temporary, string version, string marker);
+    /// <summary>通过Editor.CommandAsync执行一次QSAVE，等待命令返回、空闲及监听清理。</summary>
+    Task SaveAsync(ICadDrawing drawing);
+    /// <summary>通过原生命令导出临时文件，状态不明时停止；失败不得发布正式输出。</summary>
+    Task ExportAsync(ICadDrawing drawing, string temporary, string version);
     /// <summary>在应用上下文关闭工具打开且已确认无修改的文档。</summary>
     Task CloseAsync(ICadDrawing drawing);
 }

@@ -1,0 +1,17 @@
+# 原生命令和Plant验收入口
+
+此Session宿主及Probe均不进入产品解决方案或发布载荷。用户已加载CadCommandHost47后，通过PNCOMMANDTEST47运行；活动文件必须是配置精确登记的maintenance-*目录内Fixture.dwg，程序集仅允许来自仓库artifacts/validation目录。
+
+配置为artifacts/validation/0.1.47/native-command.json，含ProductAssembly、ProbeAssembly和SourceFixture。宿主完整等待Probe返回后才卸载隔离上下文；CAD线程、BlockTableId、当前项目、实际结果及恢复错误保存在独占证据目录。
+
+CadCommandProbe是0.1.46旧链路与原生命令的对照原型，须以0.1.46程序集构建。它会重建工具副本中的固定直线／圆／文字，不接受用户任意图纸；RunCancellation=true时等待用户在LINE选点处按Esc。原型已取得含Esc的完整证据，不能据此宣称最终产品适配器已验收。
+
+CadCommandAcceptance以0.1.47候选构建，直接调用最终AutoCadHost和BatchExporter。AcceptancePhase=Commands覆盖保存一次、选择N、只读、打开／关闭／恢复、输出格式和旧二维内容基线；BaselineExport必须指向已确认旧原型输出。RunCancellation=true时追加生产适配器实际Esc验收。
+
+AcceptancePhase=Plant仅在工具复制的PlantProjectFixture中用官方Adder创建真实Plant对象，验证实际生产FastSelectionController的多选、DataLinks数值回读、数据库事件、选择保持及管线组逆查。此分支修改并保存工具副本，不修改用户项目。AcceptancePhase=Folder只打开标题唯一的测试目录选择器，核对CAD所有者后发送取消，不选择路径。
+
+CadMaintenanceProbe使用官方空项目数据库独占副本，直接调用生产ProjectTagLookup做筛选对照；其AcceptanceComplete固定为false，不能冒充命令／Esc或面板数据验收。
+
+PLANTDWGCHECKERAUTOCHECK是Plant命令，实际使用DWGCHECKERAUTOCHECKSWITCH配置。读取使用2026 acedGetEnv的三参数签名。状态未知时不自动恢复、不关闭图纸；完整证据和安全收尾优先于继续运行。
+
+不使用Computer Use，不更改SECURELOAD／TRUSTEDPATHS，不保存用户原图。所有必要验收通过前不提交或发布v0.1.47。

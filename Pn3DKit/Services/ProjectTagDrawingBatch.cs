@@ -79,12 +79,9 @@ public static class ProjectTagDrawingBatch
                     else if (saveChanges && (result.Attempted || sync.Length != 0))
                     {
                         CheckContext();
-                        string internalDirectory = Path.Combine(directory, "_internal");
-                        if (files != null) files.EnsureDirectory(internalDirectory);
-                        else Directory.CreateDirectory(internalDirectory);
                         Message("统一保存选择 Y，QSAVE 包括本图原有修改：" + job.Path);
                         known = false;
-                        await host.SaveAsync(drawing, Path.Combine(internalDirectory, Guid.NewGuid().ToString("N") + ".done"));
+                        await host.SaveAsync(drawing);
                         var afterSave = await host.ReadStateAsync(drawing);
                         known = true;
                         if (afterSave.Modified) throw new CadOperationException("QSAVE 后图纸仍有修改，保留打开状态。", true);

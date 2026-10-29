@@ -37,9 +37,7 @@ public sealed class BatchExportCommands
                 Write("请先打开一张图纸，再执行 PNDWGEXPORT。");
                 return;
             }
-            autoCheck = new ExportAutoCheckScope(
-                () => AcadApp.GetSystemVariable(ExportAutoCheckScope.VariableName),
-                value => AcadApp.SetSystemVariable(ExportAutoCheckScope.VariableName, value));
+            autoCheck = new ExportAutoCheckScope(PlantAutoCheckEnvironment.Read, PlantAutoCheckEnvironment.Write);
             Write(autoCheck.Disable());
             var project = PlantProjectAccess.Read();
             var host = new AutoCadHost(project.IsCurrent, files);

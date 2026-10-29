@@ -71,9 +71,9 @@ public sealed class ProjectTagTests : IDisposable
         public Task ActivateAsync(ICadDrawing drawing) { _active = (Drawing)drawing; EnsureDrawing(_active); if (drawing == Original) Restores++; return Task.CompletedTask; }
         public Task<DrawingState> ReadStateAsync(ICadDrawing drawing)
         { var d = (Drawing)drawing; return Task.FromResult(new DrawingState(d.Modified, d.ReadOnly)); }
-        public Task SaveAsync(ICadDrawing drawing, string marker)
+        public Task SaveAsync(ICadDrawing drawing)
         { Saves++; ((Drawing)drawing).Modified = WrongSave; return Task.CompletedTask; }
-        public Task ExportAsync(ICadDrawing drawing, string temporary, string version, string marker) => throw new NotSupportedException();
+        public Task ExportAsync(ICadDrawing drawing, string temporary, string version) => throw new NotSupportedException();
         public Task CloseAsync(ICadDrawing drawing)
         { EnsureDrawing((Drawing)drawing); if (FailClose) throw new IOException("真实关闭失败"); Closes++; ((Drawing)drawing).Closed = true; Open.Remove(((Drawing)drawing).Path); return Task.CompletedTask; }
         public Task<bool> HasPendingDataAsync(ICadDrawing drawing)

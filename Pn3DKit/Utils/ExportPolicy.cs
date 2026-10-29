@@ -110,12 +110,21 @@ public static class ExportPolicy
         if (path.Length >= 260) throw new PathTooLongException("CAD 路径须少于 260 字符：" + path);
     }
 
+    /// <summary>Plant2026命令实测只接受至132个UTF16字符的输出路径；在打开／保存源图前拒绝，避免再次停留输入。</summary>
+    /// <param name="path">实际传给Plant导出命令的临时DWG完整路径。</param>
+    public static void ValidatePlantExportPath(string path)
+    {
+        ValidateCadPath(path);
+        if (path.Length > 132)
+            throw new PathTooLongException("Plant 2026 导出命令的输出路径不能超过132字符，请缩短输出目录：" + path);
+    }
+
     /// <summary>预检用户选定的目录与报告冲突，不创建目录，也不擅自更换路径。</summary>
     public static string ValidateOutputDirectory(string path)
     {
         string directory = Normalize(path);
         RejectLinks(directory);
-        ValidateCadPath(Path.Combine(directory, ".pn3dkit-logs", "00000.qsave.status.txt"));
+        ValidateCadPath(Path.Combine(directory, ".pn3dkit-logs", "report.json.tmp"));
         if (File.Exists(directory)) throw new IOException("所选路径是文件，请选择文件夹。");
         foreach (string name in new[] { ".pn3dkit-run", ".pn3dkit-logs", "Export.log" })
         {

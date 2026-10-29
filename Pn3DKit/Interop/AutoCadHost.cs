@@ -140,7 +140,29 @@ internal sealed class AutoCadHost : ICadHost
     }
 
     /// <inheritdoc />
-    public Task<ICadDrawing> OpenAsync(string source) => InApplicationAsync<ICadDrawing>(() =>
+    public async Task<ICadDrawing> OpenAsync(string source)
+    {
+        var drawing = await OpenCoreAsync(source);
+        try
+        {
+            // OPEN可已返回且Editor空闲，但应用输入状态尚未结束；官方空命令上下文完成该边界。
+            await InDocumentAsync(drawing, _ => true);
+            EnsureProject();
+            EnsureActive(drawing);
+            if (!AcadApp.IsQuiescent || !((Drawing)drawing).Document.Editor.IsQuiescent)
+                throw new InvalidOperationException("打开后宿主尚未确认全局空闲。");
+            return drawing;
+        }
+        catch (System.Exception ex)
+        {
+            string message = "打开后的命令上下文收尾失败，保留图纸及环境：" + ex.Message;
+            _logFiles?.Protect(message);
+            throw new CadOperationException(message, inner: ex);
+        }
+    }
+
+    /// <summary>同步打开并恢复新旧文档变量；调用方仍须完成命令上下文边界后才处理该图纸。</summary>
+    private Task<ICadDrawing> OpenCoreAsync(string source) => InApplicationAsync<ICadDrawing>(() =>
     {
         EnsureProject();
         var original = _documents.MdiActiveDocument;
@@ -191,21 +213,26 @@ internal sealed class AutoCadHost : ICadHost
     });
 
     /// <inheritdoc />
-    public Task<DrawingState> ReadStateAsync(ICadDrawing drawing) => InDocumentAsync(drawing, document =>
+    public Task<DrawingState> ReadStateAsync(ICadDrawing drawing) => InLockedDocumentAsync(drawing, document =>
         new DrawingState(Convert.ToInt32(AcadApp.GetSystemVariable("DBMOD")) != 0, document.IsReadOnly));
 
     /// <inheritdoc />
-    public Task SaveAsync(ICadDrawing drawing, string marker) =>
-        RunLispAsync(drawing, CadLispCommands.Save(marker), marker);
+    public Task SaveAsync(ICadDrawing drawing) => RunCommandAsync(drawing, ["_.QSAVE"]);
 
     /// <inheritdoc />
-    public Task ExportAsync(ICadDrawing drawing, string temporary, string version, string marker) =>
-        RunLispAsync(drawing, CadLispCommands.Export(temporary, marker, version), marker);
+    public Task ExportAsync(ICadDrawing drawing, string temporary, string version)
+    {
+        ExportPolicy.ValidatePlantExportPath(temporary);
+        ExportPolicy.RejectLinks(temporary);
+        if (File.Exists(temporary) || Directory.Exists(temporary))
+            throw new IOException("临时导出目标已存在，拒绝覆盖：" + temporary);
+        return RunCommandAsync(drawing, ExportPolicy.ExportArguments(temporary, version));
+    }
 
     /// <inheritdoc />
     public async Task CloseAsync(ICadDrawing drawing)
     {
-        // 命令上下文检查后，在应用上下文内再次核对 DBMOD，避免切换造成的竞态。
+        // 短锁只读检查后，在应用上下文内再次核对 DBMOD，避免切换造成的竞态。
         bool modified = (await ReadStateAsync(drawing)).Modified;
         if (modified) throw new CadOperationException("图纸在关闭前产生新修改，已保留。", true);
         await InApplicationAsync(() =>
@@ -219,116 +246,142 @@ internal sealed class AutoCadHost : ICadHost
         });
     }
 
-    /// <summary>提交独立 LISP，在宿主空闲回调中等待完成标记与 LISP 结束，不阻塞 CAD 消息循环。</summary>
-    /// <remarks>600 秒超时在空闲通知中检查；超时不强行中断原生操作，保留图纸及标记。</remarks>
-    private async Task RunLispAsync(ICadDrawing drawing, string command, string marker)
+    /// <summary>执行原生命令；变量仅在命令、空闲核对和监听清理全部明确结束后恢复。</summary>
+    private async Task RunCommandAsync(ICadDrawing drawing, object[] arguments)
     {
-        VerifyThread();
-        var document = ((Drawing)drawing).Document;
-        var completion = new TaskCompletionSource<bool>();
-        var watch = new Stopwatch();
-        bool ended = false, canceled = false, unknown = false, failed = false, attached = false;
-        void LispEnded(object? sender, EventArgs args) => ended = true;
-        void LispCanceled(object? sender, EventArgs args) { ended = true; canceled = true; }
-        void CommandCanceled(object? sender, EventArgs args) => canceled = true;
-        void CommandFailed(object? sender, EventArgs args) => failed = true;
-        void Unknown(object? sender, EventArgs args) => unknown = true;
-
-        System.Exception? Detach()
-        {
-            if (!attached) return null;
-            attached = false;
-            System.Exception? failure = null;
-            void Release(Action action)
-            {
-                try { action(); }
-                catch (System.Exception ex) { failure ??= ex; }
-            }
-            Release(() => AcadApp.Idle -= Idle);
-            Release(() => document.LispEnded -= LispEnded);
-            Release(() => document.LispCancelled -= LispCanceled);
-            Release(() => document.CommandCancelled -= CommandCanceled);
-            Release(() => document.CommandFailed -= CommandFailed);
-            Release(() => document.UnknownCommand -= Unknown);
-            return failure;
-        }
-
-        void Finish(CadOperationException? error)
-        {
-            var cleanupError = Detach();
-            if (cleanupError != null)
-                error = new CadOperationException("LISP 等待器清理失败：" + cleanupError.Message, inner: cleanupError);
-            if (error is { StateKnown: false }) _logFiles?.Protect(error.Message);
-            if (error == null) completion.TrySetResult(true);
-            else completion.TrySetException(error);
-        }
-
-        void Idle(object? sender, EventArgs args)
-        {
-            try
-            {
-                VerifyThread();
-                EnsureProject();
-                EnsureActive(drawing);
-                if (watch.Elapsed > TimeSpan.FromSeconds(600))
-                {
-                    Finish(new CadOperationException("等待 LISP 完成超时；已提交命令可能仍在运行，请检查 CAD。"));
-                    return;
-                }
-                if (!ended || !document.Editor.IsQuiescent) return;
-                if (canceled) { Finish(new CadOperationException("用户取消了 LISP／CAD 命令。", true, true, true)); return; }
-                if (unknown) { Finish(new CadOperationException("宿主没有所需命令，已停止批次。", true)); return; }
-                if (!File.Exists(marker)) return;
-                string status;
-                try { status = File.ReadAllText(marker).Trim(); }
-                catch (IOException) { return; }
-                if (status.Length == 0) return;
-                if (status == "DONE" && !failed) Finish(null);
-                else Finish(new CadOperationException("LISP 命令失败：" + status, true, false));
-            }
-            catch (System.Exception ex)
-            {
-                Finish(ex as CadOperationException ?? new CadOperationException(
-                    "LISP 完成状态检查失败：" + ex.Message, inner: ex));
-            }
-        }
-
+        Dictionary<string, object>? variables = null;
+        System.Exception? primary = null;
+        bool known = true;
         try
         {
             await InApplicationAsync(() =>
             {
                 EnsureProject();
                 EnsureActive(drawing);
-                ExportPolicy.ValidateCadPath(marker);
-                ExportPolicy.RejectLinks(marker);
-                if (File.Exists(marker) || Directory.Exists(marker))
-                    throw new IOException("LISP 完成标记已存在，拒绝复用：" + marker);
-                string commandPath = Path.ChangeExtension(marker, ".command.lsp");
-                using (var writer = new StreamWriter(_logFiles?.CreateNew(commandPath) ?? new FileStream(commandPath, FileMode.CreateNew),
-                    new System.Text.UTF8Encoding(false))) writer.WriteLine(command);
-                // 先挂接所有监听，再提交表达式；LISP 必须等当前 .NET 回调退出后才能开始。
-                attached = true;
-                AcadApp.Idle += Idle;
-                document.LispEnded += LispEnded;
-                document.LispCancelled += LispCanceled;
-                document.CommandCancelled += CommandCanceled;
-                document.CommandFailed += CommandFailed;
-                document.UnknownCommand += Unknown;
-                watch.Start();
-                _logFiles?.ExpectNativeFile(marker);
-                document.SendStringToExecute(command + "\n", true, false, false);
+                variables = CaptureVariables();
+                SuppressVariables();
                 return true;
             });
-            await completion.Task;
+            known = false;
+            await NativeCommandOperation.RunAsync(new NativeCommandHost(this, drawing, arguments));
+            known = true;
+        }
+        catch (System.Exception ex)
+        {
+            primary = ex;
+            if (ex is CadOperationException cad) known = cad.StateKnown;
         }
         finally
         {
-            var cleanupError = Detach();
-            if (cleanupError != null)
+            if (variables != null && known)
             {
-                _logFiles?.Protect("LISP 等待器清理失败：" + cleanupError.Message);
-                throw new CadOperationException("LISP 等待器清理失败：" + cleanupError.Message, inner: cleanupError);
+                try
+                {
+                    await InApplicationAsync(() =>
+                    {
+                        EnsureProject();
+                        EnsureActive(drawing);
+                        RestoreVariables(variables);
+                        return true;
+                    });
+                }
+                catch (System.Exception cleanup)
+                {
+                    primary = new CadOperationException("原生命令后的变量恢复失败：" + cleanup.Message,
+                        inner: primary == null ? cleanup : new AggregateException(primary, cleanup));
+                }
             }
+            if (!known || primary is CadOperationException { StateKnown: false })
+                _logFiles?.Protect(primary?.Message ?? "原生命令尚未确认安全结束。");
+        }
+        if (primary is CadOperationException operation)
+            primary = new CadOperationException(arguments[0] + "：" + operation.Message,
+                operation.StateKnown, operation.StopBatch, operation.Canceled, operation);
+        if (primary != null) ExceptionDispatchInfo.Capture(primary).Throw();
+    }
+
+    /// <summary>将官方命令上下文和主线程检查点提供给离线可测的生命周期策略。</summary>
+    private sealed class NativeCommandHost(AutoCadHost owner, ICadDrawing drawing, object[] arguments) : INativeCommandHost
+    {
+        private readonly Stopwatch _watch = Stopwatch.StartNew();
+        private Document Document => ((Drawing)drawing).Document;
+        public TimeSpan Elapsed => _watch.Elapsed;
+        public bool IsQuiescent => AcadApp.IsQuiescent && Document.Editor.IsQuiescent
+            && Document.CommandInProgress.Length == 0
+            && Convert.ToInt32(AcadApp.GetSystemVariable("CMDACTIVE")) == 0;
+        public void EnsureContext() { owner.EnsureProject(); EnsureActive(drawing); }
+        public void Protect(string reason) => owner._logFiles?.Protect(reason);
+
+        /// <summary>异常不跨越原生回调；应用上下文切换和命令Task均完整等待。</summary>
+        public async Task ExecuteAsync()
+        {
+            System.Exception? failure = null;
+            var execution = await owner.InApplicationAsync(() =>
+            {
+                EnsureContext();
+                return owner._documents.ExecuteInCommandContextAsync(async _ =>
+                {
+                    try
+                    {
+                        EnsureContext();
+                        await Document.Editor.CommandAsync(arguments);
+                        EnsureContext();
+                    }
+                    catch (System.Exception ex) { failure = ex; }
+                }, null);
+            });
+            await execution;
+            if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        /// <summary>开始前订阅命令事件、Idle及DispatcherTimer；释放时逐项清理并保留所有错误。</summary>
+        public IDisposable Observe(Action<NativeCommandEvent> report, Action checkpoint)
+        {
+            string target = Convert.ToString(arguments[0])!.TrimStart('_', '.', '-');
+            bool Matches(CommandEventArgs args) =>
+                args.GlobalCommandName.TrimStart('_', '.', '-').Equals(target, StringComparison.OrdinalIgnoreCase);
+            void Started(object? sender, CommandEventArgs args) { if (Matches(args)) report(NativeCommandEvent.Started); }
+            void Ended(object? sender, CommandEventArgs args) { if (Matches(args)) report(NativeCommandEvent.Ended); }
+            void Failed(object? sender, CommandEventArgs args) => report(NativeCommandEvent.Failed);
+            void Canceled(object? sender, CommandEventArgs args) => report(NativeCommandEvent.Canceled);
+            void Unknown(object? sender, EventArgs args) => report(NativeCommandEvent.Unknown);
+            void Check(object? sender, EventArgs args) => checkpoint();
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+            var cleanup = new NativeCleanup([
+                () => timer.Stop(), () => timer.Tick -= Check, () => AcadApp.Idle -= Check,
+                () => Document.CommandWillStart -= Started, () => Document.CommandEnded -= Ended,
+                () => Document.CommandFailed -= Failed, () => Document.CommandCancelled -= Canceled,
+                () => Document.UnknownCommand -= Unknown
+            ]);
+            try
+            {
+                Document.CommandWillStart += Started; Document.CommandEnded += Ended;
+                Document.CommandFailed += Failed; Document.CommandCancelled += Canceled;
+                Document.UnknownCommand += Unknown;
+                AcadApp.Idle += Check; timer.Tick += Check; timer.Start();
+                return cleanup;
+            }
+            catch (System.Exception primary)
+            {
+                try { cleanup.Dispose(); }
+                catch (System.Exception release) { throw new AggregateException(primary, release); }
+                throw;
+            }
+        }
+    }
+
+    /// <summary>主线程一次性释放本次监听；某项失败仍清理其余项。</summary>
+    private sealed class NativeCleanup(Action[] actions) : IDisposable
+    {
+        private bool _disposed;
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            var errors = new List<System.Exception>();
+            foreach (var action in actions)
+                try { action(); } catch (System.Exception ex) { errors.Add(ex); }
+            if (errors.Count != 0) throw new AggregateException(errors);
         }
     }
 

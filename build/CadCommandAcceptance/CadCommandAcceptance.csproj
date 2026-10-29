@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- 本项目仅在明确授权的工具副本中验证最终产品，不进入单DLL交付。 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget><Platforms>x64</Platforms>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>Pn3DKit.CadCommandAcceptance47</AssemblyName>
+    <AssemblySearchPaths>{HintPathFromItem};$(AutoCadManagedRoot);$(PlantManagedRoot);{TargetFrameworkDirectory};{RawFileName}</AssemblySearchPaths>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Pn3DKit"><HintPath>$(ProductAssemblyPath)</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcCoreMgd"><HintPath>$(AutoCadManagedRoot)/AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>$(AutoCadManagedRoot)/AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcMgd"><HintPath>$(AutoCadManagedRoot)/AcMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPProjectManagerMgd"><HintPath>$(PlantManagedRoot)/PnPProjectManagerMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPDataLinks"><HintPath>$(PlantManagedRoot)/PnPDataLinks.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPDataObjects"><HintPath>$(PlantManagedRoot)/PnPDataObjects.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPCommonMgd"><HintPath>$(PlantManagedRoot)/PnPCommonMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPCommonDbxMgd"><HintPath>$(PlantManagedRoot)/PnPCommonDbxMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnIDMgd"><HintPath>$(PlantManagedRoot)/PnIDMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnIDGUIUtilMgd"><HintPath>$(PlantManagedRoot)/PnIDGUIUtilMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnIdProjectPartsMgd"><HintPath>$(PlantManagedRoot)/PnIdProjectPartsMgd.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

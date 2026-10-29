@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- 仅作Session原型调度，不进入产品十命令及单DLL载荷。 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget><Platforms>x64</Platforms>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>Pn3DKit.CadCommandHost47</AssemblyName>
+    <AssemblySearchPaths>{HintPathFromItem};$(AutoCadManagedRoot);{TargetFrameworkDirectory};{RawFileName}</AssemblySearchPaths>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="AcCoreMgd"><HintPath>$(AutoCadManagedRoot)/AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>$(AutoCadManagedRoot)/AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcMgd"><HintPath>$(AutoCadManagedRoot)/AcMgd.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

@@ -14,5 +14,6 @@
     <Reference Include="AcDbMgd"><HintPath>$(AutoCadManagedRoot)/AcDbMgd.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="AcMgd"><HintPath>$(AutoCadManagedRoot)/AcMgd.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="PnPDataObjects"><HintPath>$(PlantManagedRoot)/PnPDataObjects.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPCommonMgd"><HintPath>$(PlantManagedRoot)/PnPCommonMgd.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 </Project>

@@ -23,9 +23,9 @@ internal sealed class PlantProjectDrawingHost(AutoCadHost cad, PlantProjectTagAc
     /// <inheritdoc />
     public Task<DrawingState> ReadStateAsync(ICadDrawing drawing) => cad.ReadStateAsync(drawing);
     /// <inheritdoc />
-    public Task SaveAsync(ICadDrawing drawing, string marker) => cad.SaveAsync(drawing, marker);
+    public Task SaveAsync(ICadDrawing drawing) => cad.SaveAsync(drawing);
     /// <inheritdoc />
-    public Task ExportAsync(ICadDrawing drawing, string temporary, string version, string marker) =>
+    public Task ExportAsync(ICadDrawing drawing, string temporary, string version) =>
         throw new NotSupportedException("位号重建不导出图纸。");
     /// <inheritdoc />
     public Task CloseAsync(ICadDrawing drawing) => cad.CloseAsync(drawing);
